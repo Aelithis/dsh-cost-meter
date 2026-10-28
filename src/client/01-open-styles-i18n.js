@@ -373,6 +373,13 @@ window.__ModuleLoader__.load({
       '.cm-footer-stack.simple.rail{border:0;background:transparent}',
       '.cm-footer-stack.simple.rail .cm-bbox{padding:4px 2px}',
       '.cm-footer-stack.simple .cm-peak-rail-track,.cm-footer-stack.simple .cm-peak-rail-classic-track{height:28px}',
+      // One reversible display preference; values, status colors and actions stay in their original nodes.
+      '.cm-footer-stack.text-only .cm-bbox-bar{display:none}',
+      '.cm-footer-stack.text-only:not(.rail) .cm-bbox{padding:4px 8px;gap:2px}',
+      '.cm-footer-stack.text-only:not(.rail) .cm-mm{display:flex;flex-direction:row;flex-wrap:wrap;gap:2px 12px;align-items:center}',
+      '.cm-footer-stack.text-only:not(.rail) .cm-mm>.cm-mm-title,.cm-footer-stack.text-only:not(.rail) .cm-codex-head,.cm-footer-stack.text-only:not(.rail) .cm-mm-reset{flex:1 0 100%;min-width:0}',
+      '.cm-footer-stack.text-only:not(.rail) .cm-mm-row:not(.cm-mm-title){gap:4px;padding:0;min-width:0;max-width:100%}',
+      '.cm-footer-stack.text-only .cm-mm-row .cm-bbox-label{max-width:115px;flex:0 1 auto}.cm-footer-stack.text-only .cm-mm-row .cm-bbox-pct{min-width:0}',
       '@media (max-width:640px){.cm-cards{grid-template-columns:1fr}.cm-grid{grid-template-columns:1fr}.cm-budget-controls{grid-template-columns:1fr}}',
       // ── dsh-pocket 手机端适配(task-10):双判据 —— @media (max-width:1023px) 覆盖真实窄屏,
       //    data-dsh-pocket-layout="mobile" 覆盖宽屏强制移动布局;两条判据都只新增覆盖,桌面不变。──

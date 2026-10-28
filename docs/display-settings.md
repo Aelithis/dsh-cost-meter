@@ -1,5 +1,9 @@
 # 显示设置预览
 
+在“费用 → 显示 → 侧栏”打开“隐藏进度条，仅显示紧凑文本”，可去掉峰谷时段、套餐额度、余额、预算和模型占比的图形条。额度保留窗口名与百分比，峰谷保留当前时段、倒计时和切换时间；悬停详情、点击刷新与超额警告仍可使用。偏好会保存，重启后保留。此选项只影响侧栏和侧栏预览，不改变用量查询、账本、计价、输入区额度条或原有布局/条形方向；关闭后恢复原样式。在峰谷组件里仍可选择只显示倒计时或切换时间。
+
+**Compact text:** In **Cost → Display → Sidebar**, enable **Hide progress bars, show compact text** to hide sidebar pricing-period, quota, balance, budget and model-share bars. Window labels, percentages, period times, hover details, refresh actions and warnings remain available. The preference survives restart, applies to the sidebar preview, and never changes billing, account queries, composer bars or the saved graphical style. Disable it to restore the existing bars.
+
 在“费用 → 额度”展开自定义余额条目，可设置“跳转链接（可选）”。填写账户、充值或控制台的 HTTP(S) 地址后，侧栏该条余额名称旁显示跳转箭头；余额行、进度卡和查询失败提示均可使用。点击箭头在新标签页打开，不触发余额刷新。每条链接独立保存，留空时不显示箭头；不从余额查询接口或请求头推导链接。
 
 选择“侧栏 → 调整组件 → 余额”，可开启“仅官方渠道显示”（`balance.officialChannelOnly`，默认关闭）。开启后，侧栏官方余额只在当前会话使用 `deepseek`、`deepseek-official` 或 `deepseek-account` 渠道时显示；带 `llm-` 前缀的名称按相同渠道识别。无活跃会话或宿主未提供渠道投影时，按今日账本是否有官方渠道调用判断，包括零费用调用。当前会话明确使用其他渠道时，即使今天调用过官方渠道也隐藏；切换渠道后下一次调用更新显示。设置页官方余额面板和显示预览不受渠道限制，“隐藏官方余额”、显示位置与来源标注继续独立生效。

@@ -50,11 +50,12 @@
       const detail = [t(keys.notice), (en ? 'Beijing time · ' : '北京时间 · ') + period, remaining + ' · ' + change,
         (en ? 'Elapsed ' : '本时段已过 ') + view.progress.toFixed(1) + '%'].join('\n')
       const mode = config.peakTimeDisplay ?? 'both'
-      const variant = config.peakProgressVariant ?? (config.sidebarSimple ? 'simple' : config.sidebarStyle === 'compact' ? 'compact' : 'full')
+      const textOnly = config.sidebarTextOnly === true
+      const variant = textOnly ? 'compact' : config.peakProgressVariant ?? (config.sidebarSimple ? 'simple' : config.sidebarStyle === 'compact' ? 'compact' : 'full')
       const phaseText = view.holiday ? (en ? 'Holiday · off-peak' : '节假日 · 全天谷价') : view.weekend ? (en ? 'Weekend · off-peak' : '周末 · 全天谷价') : t(keys.short)
       const shortPhase = view.holiday ? (en ? 'Holiday' : '假日') : view.weekend ? (en ? 'Weekend' : '周末') : t(keys.short)
       const phase = text => el('span', { className: 'cm-peak-progress-phase' }, el('i', { 'aria-hidden': true }), text)
-      const track = el('div', { className: 'cm-peak-progress-track', role: 'progressbar', 'aria-label': en ? 'Current pricing period elapsed' : '当前计价时段已过进度', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': Math.round(view.progress * 10) / 10, 'aria-valuetext': detail },
+      const track = textOnly ? null : el('div', { className: 'cm-peak-progress-track', role: 'progressbar', 'aria-label': en ? 'Current pricing period elapsed' : '当前计价时段已过进度', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': Math.round(view.progress * 10) / 10, 'aria-valuetext': detail },
         el('span', { className: 'cm-peak-progress-fill', style: { [rail ? 'height' : 'width']: view.progress + '%' } }))
       const compactTime = mode === 'countdown' ? shortDuration : mode === 'switch' ? view.switchTime + ' → ' + next : view.switchTime + ' · ' + shortDuration
       const content = rail ? el(Fragment, null, track, el('span', { className: 'cm-peak-progress-rail-label' }, shortPhase))
@@ -72,5 +73,5 @@
             track,
             mode === 'both' ? el('div', { className: 'cm-peak-progress-meta' }, el('span', null, view.startText + (en ? ' start' : ' 开始')), el('span', null, change)) : null)
       return el(Tooltip, { portal: true, label: detail, side: 'right', delayMs: 300 },
-        el('div', { 'data-cm-display': 'peak', title: detail, className: 'cm-peak-progress ' + (view.inPeak ? 'peak' : 'off') + (rail ? ' rail' : ' variant-' + variant), 'data-variant': variant, 'data-progress': view.progress, 'data-switch-at': view.nextAtMs }, content))
+        el('div', { 'data-cm-display': 'peak', title: detail, className: 'cm-peak-progress ' + (view.inPeak ? 'peak' : 'off') + (rail ? ' rail' : ' variant-' + variant) + (textOnly ? ' text-only' : ''), 'data-variant': variant, 'data-progress': view.progress, 'data-switch-at': view.nextAtMs }, content))
     }
