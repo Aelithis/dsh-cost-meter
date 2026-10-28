@@ -1,3 +1,17 @@
+# DSH Private 本地计费分支
+
+基线提交 `f2e688db1c76eab0cafef4391f8bf5d60d8e938a`，当时自称 1.9.43 但未发布同名正式标签。私人版为 `1.9.44-private.1`，从本 Fork 固定完整提交安装，不使用上游安装脚本或 latest。
+
+默认只做本地用量与费用统计。余额、Go 额度和自动汇率关闭；移除自动价格刷新、模型目录发现；关闭的余额和额度面板不探测凭据。删除全局子进程启动、billion-context 和原生搜索请求观察器的挂载，保留普通 llm/stream 用量计费和子代理费用汇总。
+
+手动模型价格、手动价格同步和明确配置的网关余额功能保留。网关费率尚未填写，默认价格仅供参考；真实账单以网关为准。默认在输入区下方与侧栏展示费用。
+
+隔离测试验证启动、首次 getState 及延迟 5.5 秒均无网络请求和凭据 describe/get；原模型流保持透传；输入 100 万和输出 50 万按输入 2 美元/百万、输出 4 美元/百万的手填费率计为 4 美元。手填价格与子代理费用的现有测试通过。
+
+同时修复上游手动价格同步代码中 const 变量被重新赋值导致构建失败的问题。未修改 DSH 主程序或模型配置。
+
+---
+
 # dsh-cost-meter
 
 **English** | [简体中文](README.zh-CN.md) · [Install](#installation) · [Features](#feature-overview) · [Screenshots](#screenshots--walkthrough) · [Community](#community)
