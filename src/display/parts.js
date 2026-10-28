@@ -13,7 +13,7 @@ function sidebarPreviewConfig(config, selected) {
 function sidebarPreviewParts(config, selected, text) {
   const normal = config.sidebarSimple !== true
   const part = (id, label, selector, on, control) => ({ key: selected, part: id, label, selector, on, control })
-  if (selected === 'balance' || selected === 'customBalance') return [part('balance-progress', text('余额进度条', 'Balance progress'), '.cm-bbox-bar.segments', config.balance?.showProgressBar === true, '[data-display-option="balance-progress"]')]
+  if (selected === 'balance' || selected === 'customBalance') return config.sidebarTextOnly ? [] : [part('balance-progress', text('余额进度条', 'Balance progress'), '.cm-bbox-bar.segments', config.balance?.showProgressBar === true, '[data-display-option="balance-progress"]')]
   if (selected === 'budget') return [part('budget-detail', text('预算明细', 'Budget details'), '.cm-bbox-line', normal && config.budget?.detail !== false, '[data-display-option="budget-detail"]')]
   if (selected === 'go') return [part('go-detail', text('其他时段与重置时间', 'Other windows and reset time'), '.cm-bbox-line', normal && config.goQuota?.detail !== false, '[data-display-option="go-detail"]')]
   if (selected === 'today') return [
@@ -23,9 +23,9 @@ function sidebarPreviewParts(config, selected, text) {
   if (selected === 'models') return [
     part('models-expanded', text('展开的模型明细', 'Expanded model details'), ':scope > .cm-buttons, :scope > div:has(.cm-bbox-head)', normal && config.sidebarModels?.defaultOpen === true, '[data-model-field="defaultOpen"] input'),
     part('models-tokens', 'Token', '.cm-mstats-note', normal && config.sidebarModels?.tokens === true, '[data-model-field="tokens"] input'),
-    part('models-shares', text('费用占比', 'Cost share'), '.cm-bbox-bar', normal && config.sidebarModels?.shares !== false, '[data-model-field="shares"] input'),
+    ...(!config.sidebarTextOnly ? [part('models-shares', text('费用占比', 'Cost share'), '.cm-bbox-bar', normal && config.sidebarModels?.shares !== false, '[data-model-field="shares"] input')] : []),
   ]
-  if (selected === 'peak' && config.peakStyle === 'progress') return [
+  if (selected === 'peak' && config.peakStyle === 'progress' && !config.sidebarTextOnly) return [
     part('peak-countdown', text('倒计时', 'Countdown'), '.cm-peak-progress-time', config.peakTimeDisplay !== 'switch', '[data-display-option="peak-time"] select'),
     part('peak-switch', text('切换时间', 'Switch time'), '.cm-peak-progress-meta', config.peakTimeDisplay !== 'countdown', '[data-display-option="peak-time"] select'),
   ]

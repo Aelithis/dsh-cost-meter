@@ -13,3 +13,4 @@
 .cm-peak-progress.variant-summary{padding:0;border:0;border-radius:0;background:transparent;gap:2px;font-size:10px}.variant-summary .cm-peak-progress-head{gap:5px;align-items:baseline;flex-wrap:wrap}.cm-peak-summary-left{display:flex;gap:4px;align-items:center;flex-wrap:wrap;min-width:0}.cm-peak-summary-countdown,.variant-summary .cm-peak-progress-time{font-size:10px;white-space:nowrap;color:var(--dsw-alias-label-tertiary,#888)}.variant-summary .cm-peak-progress-track{height:3px}.variant-summary .cm-peak-progress-phase{font-weight:400}
 
 .cm-peak-intro-summary{max-width:320px;margin:16px auto}.cm-peak-intro-summary .cm-footer-stack{width:100%}
+.cm-peak-progress.text-only:not(.rail){justify-content:space-between;flex-wrap:wrap;gap:2px 8px}.cm-peak-progress.text-only .cm-peak-progress-time{min-width:0;max-width:100%;white-space:normal}.cm-peak-progress.text-only .cm-peak-progress-phase i{display:none}

@@ -145,6 +145,7 @@
         modelStatistics: v.modelStatistics ?? {},
         ...mapFields(v, ['hideSessionCostHeader', 'hideSessionCostDock', 'hideTurnCost', 'followSkinTransparency', 'sidebarTodayBalanceInline', 'sessionListCosts', 'hideBudget', 'sessionCostCompact', 'contextCostsEnabled', 'contextCostsPromptSeen', 'showTotalWithPlan', 'sidebarSimple', 'sidebarSimplePromptSeen', 'codexQuotaEnabled', 'codexCompatPromptDismissed', 'includeSubagentCost', 'peakEnabled', 'peakAlertWebNotify', 'peakProgressPromptSeen'], value => value === true),
         sidebarTodayMetric: ['tokens', 'both'].includes(v.sidebarTodayMetric) ? v.sidebarTodayMetric : 'cost',
+        sidebarTextOnly: v.sidebarTextOnly === true,
         ...(Object.hasOwn(v, 'sidebarOrder') ? { sidebarOrder: Array.isArray(v.sidebarOrder) ? v.sidebarOrder : [] } : {}),
         statisticsBasis: v.statisticsBasis,
         sidebarModels: Object.fromEntries(Object.entries(MODEL_SIDEBAR_DEFAULTS).map(([k, v0]) => [k, v.sidebarModels?.[k] ?? v0])),
@@ -2427,6 +2428,7 @@
         ? el(PeakProgress, { ...props, state, config, view: 'guide' }) : null
     }
     function peakNoticeEl(state, config, t) {
+      if (config.sidebarTextOnly === true) return el(PeakProgress, { config, t })
       return el(config?.peakStyle === 'progress' ? PeakProgress : config?.peakStyle === 'classic' ? PeakStripClassic : PeakStrip, { config, t })
     }
 
@@ -2478,6 +2480,7 @@
           el('span', { className: 'cm-peak-rail-classic-label' }, t(keys.short))))
     }
     function peakNoticeRailEl(state, config, t) {
+      if (config.sidebarTextOnly === true) return el(PeakProgress, { config, t, rail: true })
       return el(config?.peakStyle === 'progress' ? PeakProgress : config?.peakStyle === 'classic' ? PeakRailStripClassic : PeakRailStrip, { config, t, rail: true })
     }
 
@@ -3353,55 +3356,16 @@
           el('button', { type: 'button', className: 'cm-btn small primary', onClick: () => choose(true) }, t('quotaStripGuideOn'))))
     }
 
-    // 更新后的提醒(issue #37):告知侧边栏余额/额度图框支持点击立即刷新;
-    // 「知道了」写回 balance.clickHintSeen=true 后永久消失(挂常驻 sidebar.footer.action)。
-    // 仅在侧边栏确有可点击图框(官方余额 / 自定义余额 / Coding Plan)时展示,避免噪音。
-    // 已读标记双通道:配置标记(跨设备) + localStorage 本地兜底。后者防御版本错位——
-    // 服务端/网关若运行旧版 typert schema(decode 时 zod parse 会剥离 schema 未声明的键),
-    // 新增的配置标记在到达客户端前就被剥掉,卡片会在每次刷新后重现;localStorage 不经 RPC 链路,不受影响。
-    const BALANCE_CLICK_HINT_LS_KEY = 'dsh-cost-meter:balance-click-hint-seen'
-    const readBalanceClickHintLS = () => {
-      try { return window.localStorage.getItem(BALANCE_CLICK_HINT_LS_KEY) === '1' } catch (_) { return false } // 隐私模式等场景静默
-    }
-    const writeBalanceClickHintLS = () => {
-      try { window.localStorage.setItem(BALANCE_CLICK_HINT_LS_KEY, '1') } catch (_) { /* 配置标记仍是主通道 */ }
-    }
+    let balanceGuidePage
     function BalanceClickGuide(props) {
-      // Hook 全部前置(promptSeen 类标记翻转时会提前 return null,顺序必须稳定)。
-      const costStore = props.useCost ? props.useCost(s => s) : undefined
-      const busyRef = useRef(false)
-      const [dismissed, setDismissed] = useState(false)
-      const [lsSeen] = useState(readBalanceClickHintLS)
-      const state = costStore?.state
-      if (!state) return null
-      const config = state.config
-      const sidebarBalanceOn = config.balance?.display === 'sidebar' || config.balance?.display === 'both'
-      const sidebarCustomOn = (config?.customBalances ?? []).some(e => e?.enabled === true && (e.display === 'sidebar' || e.display === 'both'))
-        || (config.customBalance?.enabled === true && (config.customBalance?.display === 'sidebar' || config.customBalance?.display === 'both'))
-      const sidebarPlansOn = CODING_PLAN_ROWS.some(r => {
-        const entry = config.codingPlans?.[r.id]
-        return entry?.enabled === true && (entry.display === 'sidebar' || entry.display === 'both')
-      })
-      if (dismissed || lsSeen || config.balance?.clickHintSeen === true || (!sidebarBalanceOn && !sidebarCustomOn && !sidebarPlansOn)) return null
-      // 串行展示:横条引导(QuotaStripGuide)与本卡同为 fixed 顶部卡片,同屏会完全重叠,
-      // 点掉一张露出另一张,视觉上像「点了没反应」。等横条引导处理完(promptSeen)再出现。
-      if (!simpleGuideSeen(config)) return null
-      if (config.quotaStrip?.promptSeen !== true) return null
-      const t = makeT(resolveLocale(config))
-      const dismiss = () => {
-        if (busyRef.current === true) return
-        // 乐观消失:点击立即隐藏,落盘确认失败才恢复可见(避免宿主渲染时序让卡片看起来「点不掉」)。
-        setDismissed(true)
-        busyRef.current = true
-        writeBalanceClickHintLS() // 本地兜底同步落点,不依赖 RPC 成败
-        props.api.updateConfig({ balance: { ...(config.balance ?? {}), clickHintSeen: true } })
-          .catch(() => { busyRef.current = false; setDismissed(false) })
-      }
-      return el('div', { className: 'cm-qguide', role: 'dialog', 'aria-label': t('balanceClickGuideTitle') },
-        el('h4', null, t('balanceClickGuideTitle')),
-        el('p', null, t('balanceClickGuideBody')),
-        el('div', { className: 'cm-buttons' },
-          el('button', { type: 'button', className: 'cm-btn small primary', onClick: dismiss }, t('balanceClickGuideOk'))))
+      const [Component, setComponent] = useState(null)
+      useEffect(() => {
+        let live = true
+        const page = balanceGuidePage ??= require.async('./client.notices.js').then(module => module.mount({ FloatingCard, CODING_PLAN_ROWS, makeT, resolveLocale, simpleGuideSeen })).catch(error => { balanceGuidePage = null; throw error })
+        page.then(value => { if (live) setComponent(() => value) }).catch(() => {})
+        return () => { live = false }
+      }, [])
+      return Component ? el(Component, props) : null
     }
 
     function sidebarTodayValue(today, config, t) {
@@ -3548,5 +3512,5 @@
         const rank = node => { const index = order.indexOf(node.key); return index < 0 ? 999 : index }
         nodes.sort((a, b) => rank(a) - rank(b))
       }
-      return el('div', { ...(simple ? { tabIndex: 0, role: 'region', 'aria-label': t('sidebarSimple') } : {}), className: 'cm-footer-stack' + (config.sidebarTodayBalanceInline ? ' same-line' : '') + (wide ? '' : ' rail') + (compactWide ? ' compact' : '') + (simple ? ' simple' : config.sidebarStyle === 'summary' && wide ? ' summary' : '') }, ...nodes)
+      return el('div', { ...(simple ? { tabIndex: 0, role: 'region', 'aria-label': t('sidebarSimple') } : {}), className: 'cm-footer-stack' + (config.sidebarTodayBalanceInline ? ' same-line' : '') + (wide ? '' : ' rail') + (compactWide ? ' compact' : '') + (simple ? ' simple' : config.sidebarStyle === 'summary' && wide ? ' summary' : '') + (config.sidebarTextOnly ? ' text-only' : '') }, ...nodes)
     }

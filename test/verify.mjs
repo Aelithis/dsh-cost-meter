@@ -388,8 +388,9 @@ console.log('[ok] usdFromCost(CNY 折算/USD 原值/非法兜底/往返抵消)�
   const indexSource = readFileSync(new URL('../lib/index.js', import.meta.url), 'utf8')
   assert.ok(indexSource.includes("const url = pricingCurrency === 'CNY' ? OFFICIAL_PRICING_URL_ZH : OFFICIAL_PRICING_URL"), 'fetchPricingHtml 按币种选官方页')
   assert.ok(indexSource.includes("parsePricingHtml(await fetchPricingHtml(locale, wanted === 'CNY' ? 'USD' : 'CNY'))"), '目标币种页失败回退另一语言页')
-  assert.ok(indexSource.includes("currency: parsed.currency === 'CNY' ? 'CNY' : 'USD'"), '同步写入价表币种标记')
-  assert.ok(indexSource.includes('default: { ...def, ...priceMultiplierSettings(ledger.config.prices.default) }'), 'default 随页面替换，仅保留用户倍率，不残留旧币种单价')
+  const syncSource = readFileSync(new URL('../lib/official-price-sync.js', import.meta.url), 'utf8')
+  assert.ok(indexSource.includes('prices: officialPriceSyncTable(ledger.config.prices, parsed, locale)') && syncSource.includes("const currency = parsed.currency === 'CNY' ? 'CNY' : 'USD'"), '同步通过原子币种保护构建价表')
+  assert.ok(syncSource.includes('default: { ...fallback, ...priceMultiplierSettings(current?.default) }'), 'default 随页面替换，仅保留用户倍率，不残留旧币种单价')
   assert.ok(indexSource.includes('pricesSyncedFallback'), '回退提示文案存在(zh/en)')
   const clientSource = readClientSource()
   assert.ok(clientSource.includes("setField('pricingCurrency'"), '设置页含官方价格币种下拉')
@@ -1436,7 +1437,7 @@ assert.deepEqual(CODING_PLAN_PROVIDERS.scnet.credentialEnvs, [], 'scnet 不需�
   assert.equal(conv.balance.clickHintSeen, false, '非法 clickHintSeen 清洗为未引导')
   // 双端声明与客户端归一。
   const hostTypert = readFileSync(new URL('../lib/typert.host.js', import.meta.url), 'utf8')
-  const clientSource = readClientSource()
+  const clientSource = readClientSource() + readFileSync(new URL('../src/notices/index.js', import.meta.url), 'utf8')
   assert.ok(hostTypert.includes('clickHintSeen: z.boolean().optional()'), 'typert 声明 balance.clickHintSeen')
   assert.ok(clientSource.includes('clickHintSeen: v.balance?.clickHintSeen === true'), 'parseConfig 归一 clickHintSeen')
   // 共享 helper:busy 防连点 + 失败信息留存(下次刷新清除)。
@@ -1465,8 +1466,10 @@ assert.deepEqual(CODING_PLAN_PROVIDERS.scnet.credentialEnvs, [], 'scnet 不需�
   assert.ok(clientSource.includes('if (dismissed || lsSeen || config.balance?.clickHintSeen === true || (!sidebarBalanceOn && !sidebarCustomOn && !sidebarPlansOn)) return null'), '引导卡按 dismissed(乐观)/lsSeen(本地)/clickHintSeen + 侧边栏可见性门控')
   // 串行展示:横条引导未处理完(promptSeen)时本卡不出现,避免两张 fixed 顶部卡片重叠互顶。
   assert.ok(clientSource.includes('if (config.quotaStrip?.promptSeen !== true) return null'), '引导卡等横条引导处理完再出现(防 fixed 卡片重叠)')
-  // 乐观消失:点击立即本地隐藏,落盘失败才恢复(e2e 已验证 RPC 往返,此为渲染时序兜底)。
-  assert.ok(clientSource.includes('setDismissed(true)') && clientSource.includes('busyRef.current = false; setDismissed(false)'), '「知道了」乐观消失 + 失败恢复')
+  // 已读提醒不依赖设置 RPC 成功；拒绝、同步抛错与迟到失败均不重新弹出。
+  const balanceGuideSource = readFileSync(new URL('../src/notices/index.js', import.meta.url), 'utf8')
+  assert.ok(balanceGuideSource.includes('setDismissed(true)') && !balanceGuideSource.includes('setDismissed(false)'), '已读不因保存失败重现')
+  assert.ok(balanceGuideSource.includes('return el(FloatingCard,') && balanceGuideSource.includes("'data-cm-action': 'dismiss'"), '余额提醒使用共享可交互顶层浮卡')
   // 已读标记双通道:localStorage 本地兜底(刷新后重现修复)。
   // 根因:服务端/网关运行旧版 typert schema 时,decode 的 zod parse 会剥离 schema 未声明的键,
   // clickHintSeen(v1.5.32 新增声明)在 RPC 链路上被剥掉,客户端永远读不到 true。
@@ -7033,3 +7036,9 @@ await import('./review-fx-consistency.mjs')
 await import('./billion-context-storage.mjs')
 await import('./billion-context-inventory.mjs')
 await import('./review-io-lifecycle.mjs')
+
+await import('./sidebar-text-only.mjs')
+
+await import('./balance-notice-loading.mjs')
+
+await import('./official-price-sync-currency.mjs')

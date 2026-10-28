@@ -119,9 +119,15 @@ jobs:
           node test/factory-quota-browser.mjs
           node test/codex-quota-browser.mjs
           node test/display-settings-browser.mjs
+          node test/display-settings-browser.mjs --text-only-only
           node test/quota-placement-browser.mjs
           node test/balance-gateway-browser.mjs
           node test/sidebar-guide-browser.mjs
+          node test/balance-notice.mjs
+          git fetch --depth=1 origin aa41d946c475b9e37ee11362e0e130df816d52b0
+          git show aa41d946c475b9e37ee11362e0e130df816d52b0:lib/client.js > .tmp-balance-notice-before.js
+          node test/balance-notice-browser.mjs --baseline
+          node test/balance-notice-browser.mjs
           node test/peak-alert-browser.mjs
           node test/peak-progress-browser.mjs
           node test/update-notice-skin-browser.mjs
@@ -141,6 +147,7 @@ jobs:
             .tmp-session-costs-performance-after/*
             .tmp-balance-gateway-browser/*
             .tmp-sidebar-guide-browser/*
+            .tmp-balance-notice/*
             .tmp-peak-alert-browser/*
             .tmp-idle-performance/result.json
             .tmp-context-regression-browser/report.json
