@@ -57,6 +57,7 @@ const server = createServer((request, response) => {
     html[data-env=darwin]{--dsh-frame-top-clearance:48px;--dsh-frame-overlay-top:68px}
     body{margin:0;background:#131315;color:#eee;font:14px/1.6 system-ui}#caption{position:fixed;inset:0 0 auto;height:40px;z-index:2147483647;-webkit-app-region:drag;background:#303033}html[data-env=darwin] #caption{height:48px}html[data-env=web] #caption,html[data-env=fullscreen] #caption{display:none}
     #root{pointer-events:none;-webkit-app-region:drag}#page-action{position:fixed;left:16px;bottom:20px}
+    #host-blocker{position:fixed;inset:var(--dsh-frame-overlay-top,60px) auto auto 24px;margin:0;box-sizing:border-box;max-width:calc(100vw - 48px);padding:20px;border:1px solid #555;background:#252527;color:#eee;z-index:100;-webkit-app-region:no-drag}
     html[data-skin=light]{--dsw-alias-bg-layer-2:rgba(242,246,255,.2);--dsw-alias-label-primary:#172738;--dsw-alias-label-secondary:#445c73;--dsw-alias-button-elevated-fill:#eef4fa}
     html[data-skin=translucent]{--dsw-alias-bg-layer-2:rgba(25,31,48,.15);--dsw-alias-label-primary:#a6ffe3;--dsw-alias-label-secondary:#adc5df}
     html[data-skin=translucent] #root{position:absolute;left:20px;top:150px;width:240px;height:70px;overflow:hidden;contain:paint;transform:translateX(50px);filter:blur(0);opacity:.4}
@@ -159,7 +160,10 @@ try {
     }
     for (const kind of ['modal','role']) {
       await fresh('blocked='+kind,false); assert.equal(await guide().count(),0,'existing '+kind+' gets priority over optional introduction'); assert.equal(await page.evaluate(()=>window.saves),0)
-      await page.getByRole('button',{name:'Close existing settings',exact:true}).click(); await guide().waitFor()
+      const closeSettings=page.getByRole('button',{name:'Close existing settings',exact:true})
+      const control=await closeSettings.evaluate(node=>{const r=node.getBoundingClientRect(),caption=document.getElementById('caption');return{top:r.top,chrome:getComputedStyle(caption).display==='none'?0:caption.getBoundingClientRect().bottom,reachable:node.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))}})
+      assert.ok(control.top>=control.chrome&&control.reachable,'existing '+kind+' settings controls clear the desktop titlebar and receive real clicks')
+      await closeSettings.click(); await guide().waitFor()
       await page.evaluate(()=>window.openBlocker('modal')); await guide().waitFor({state:'detached'})
       assert.equal(await page.evaluate(()=>window.saves),0,'temporary deferral never persists a dismissal')
       assert.equal(await page.evaluate(()=>localStorage.getItem('dsh-cost-meter:display-onboarding-seen')),null)

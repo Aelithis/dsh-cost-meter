@@ -76,6 +76,12 @@ try {
   resolution = { profileDir: profileLink, localPackageNames: [], linkedRoots: [], entries: [{ name: 'billion-context', packageDir: mapped, scope: 'profile' }] }
   entries = [entry('billion-context', pathToFileURL(join(otherProfile, 'cordis.yml')).href)]
   assert.equal((await lookup.read()).version, '0.1.210', 'canonical base under symlinked profile uses the published mapping')
+  const anchorAlias = join(root, 'anchor-alias'); symlinkSync(otherProfile, anchorAlias, 'junction')
+  entries = [entry('billion-context', pathToFileURL(join(anchorAlias, 'not-yet-written.yml')).href)]
+  assert.equal((await lookup.read()).version, '0.1.210', 'virtual anchor under a different directory alias resolves its canonical parent')
+  pkg(join(otherProfile, 'node_modules/billion-context'), '0.1.215')
+  entries = [entry('billion-context', pathToFileURL(join(anchorAlias, 'not-yet-written.yml')).href)]
+  assert.equal((await lookup.read()).version, '0.1.215', 'canonical local dependency retains priority over an intercepted mapping')
   resolution = { profileDir: otherProfile, linkedRoots: [{ name: 'external', realPath: root }], entries: [{ name: 'billion-context', packageDir: mapped, scope: 'profile' }] }
   entries = [entry('billion-context', pathToFileURL(join(root, 'external.js')).href)]
   assert.equal(await lookup.read(), undefined, 'unresolved external peer interception is unknown, never a guessed version')
