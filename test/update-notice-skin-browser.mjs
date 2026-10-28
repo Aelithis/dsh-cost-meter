@@ -15,9 +15,9 @@ const req = createRequire(resolve(process.env.DSH_TEST_UI_MODULES ?? '.tmp-conte
 const { chromium } = req('playwright-core')
 const output = resolve('.tmp-notice-skin'); mkdirSync(output, { recursive: true })
 const main = readdirSync('src/client').filter(n => n.endsWith('.js')).sort().map(n => readFileSync('src/client/' + n, 'utf8')).join('')
-  .replace('exports.apply = apply', 'exports.test = { SidebarSummaryGuide, PeakProgressGuide, css }; exports.apply = apply')
-const config = sanitizeConfig({ locale: 'zh', sidebar: true, sidebarSummaryPromptSeen: false, peakProgressPromptSeen: true,
-  peakEnabled: true, sidebarSimplePromptSeen: true, quotaStrip: { promptSeen: true }, balance: { clickHintSeen: true } })
+  .replace('exports.apply = apply', 'exports.test = { DisplayOnboarding, peakView, peakPhaseAt, phaseLabelKeys, countdownText, resolveLocale, makeT, Tooltip, FloatingCard, renderSidebarFooter, css }; exports.apply = apply')
+const config = sanitizeConfig({ locale: 'zh', sidebar: true, sidebarSummaryPromptSeen: false, peakProgressPromptSeen: false,
+  peakEnabled: true, sidebarSimplePromptSeen: false, quotaStrip: { promptSeen: false }, balance: { clickHintSeen: false } })
 const state = { config, today: zeroDay(), month: zeroDay(), total: zeroDay(), history: [], codingPlans: {} }
 const entry = baseline => `
 import * as ReactDOMPortal from ${literal(req.resolve('react-dom'))};import React from ${literal(req.resolve('react'))};import * as ReactDOM from ${literal(req.resolve('react-dom/client'))};
@@ -27,19 +27,20 @@ ${readFileSync(join(skin, 'lib/client.js'), 'utf8')}
 window.skinErrors=[];const disposers=[];
 const ctx={get:()=>undefined,inject:()=>{},on:()=>()=>{},effect:fn=>{const d=fn();if(typeof d==='function')disposers.push(d)},logger:{warn:()=>{},error:()=>{}}};
 window.skinUI.apply(ctx);
-const costRequire=name=>name==='react'?React:{Tooltip:({children})=>children};costRequire.async=async()=>window.peakUI;
+const costRequire=name=>name==='react'?React:name==='react-dom'?ReactDOMPortal:{Tooltip:({children})=>children};costRequire.async=async()=>window.noticeUI;
 window.__ModuleLoader__={load:mod=>window.mainUI=mod.factory(costRequire)};
 ${main}
-window.__ModuleLoader__={load:mod=>window.peakUI=mod.factory(require)};
-${readFileSync(baseline ? 'test/fixtures/peak-intro-1.9.16.js' : 'lib/client.peak.js', 'utf8')}
-const {SidebarSummaryGuide,PeakProgressGuide,css}=window.mainUI.test;const initial=${literal(state)};
+window.__ModuleLoader__={load:mod=>window.noticeUI=mod.factory(require)};
+${readFileSync(baseline ? 'test/fixtures/peak-intro-1.9.16.js' : 'lib/client.notices.js', 'utf8')}
+const {DisplayOnboarding,css}=window.mainUI.test;const LegacyGuide=${baseline ? 'window.noticeUI.mount(window.mainUI.test)' : 'null'};const initial=${literal(state)};
 window.clicks=0;window.saved=[];window.variant='summary';
 function App(){const [state,setState]=React.useState(initial);const useCost=()=>({state});const api={updateConfig:async patch=>{window.saved.push(patch);const next={...state,config:{...state.config,...patch}};setState(next);return next}};
-return React.createElement(React.Fragment,null,React.createElement('style',null,css),React.createElement('div',{id:'host-scroller',style:{height:300,overflow:'auto',width:220}},React.createElement('button',{id:'host-action',onClick:()=>window.clicks++},'宿主按钮'),React.createElement('div',{style:{height:1600}},'宿主会话')),React.createElement(window.variant==='summary'?SidebarSummaryGuide:PeakProgressGuide,{useCost,api}))}
+return React.createElement(React.Fragment,null,React.createElement('style',null,css),React.createElement('div',{id:'host-scroller',style:{height:300,overflow:'auto',width:220}},React.createElement('button',{id:'host-action',onClick:()=>window.clicks++},'宿主按钮'),React.createElement('div',{style:{height:1600}},'宿主会话')),React.createElement(${baseline ? 'LegacyGuide' : 'DisplayOnboarding'},{useCost,api,config:state.config,state,view:'summary-guide'}))}
 const root=ReactDOM.createRoot(document.getElementById('root'));window.remount=()=>root.render(React.createElement(App,{key:Math.random()}));window.remount();window.ready=true;
 `
 const bundles = {}
 for (const variant of ['before', 'after']) bundles[variant] = (await build({ stdin: { contents: entry(variant === 'before'), resolveDir: process.cwd() }, bundle: true, write: false, format: 'iife', platform: 'browser' })).outputFiles[0].contents
+if (process.argv.includes('--compile-only')) { console.log('[ok] real skin before/after fixtures bundled'); process.exit(0) }
 const server = createServer((request, response) => {
   const pathname = new URL(request.url, 'http://localhost').pathname
   if (/^\/(before|after)\.js$/.test(pathname)) { response.setHeader('content-type', 'text/javascript'); response.end(bundles[pathname.slice(1, -3)]); return }
@@ -63,10 +64,11 @@ try {
   for (const variant of ['before', 'after']) {
     await page.goto(url + '/' + variant)
     await page.waitForFunction(() => window.ready && document.body.hasAttribute('data-dsh-claude-style'))
-    await page.locator('dialog[open]').waitFor({ state: 'attached' })
+    const notice = page.locator(variant === 'before' ? 'dialog[open]' : '.cm-qguide')
+    await notice.waitFor({ state: 'attached' })
     // Allow the actual skin's scheduled DOM classification to observe the notice.
     await page.waitForTimeout(400)
-    const scene = await page.locator('dialog').evaluate(d => ({ open: d.open, modal: d.matches(':modal'), display: getComputedStyle(d).display, attributes: d.getAttributeNames().map(k => [k, d.getAttribute(k)]) }))
+    const scene = await notice.evaluate(d => ({ open: d.open, modal: d.matches(':modal'), display: getComputedStyle(d).display, attributes: d.getAttributeNames().map(k => [k, d.getAttribute(k)]) }))
     reports.push({ variant, ...scene })
     if (variant === 'before') {
       assert.equal(scene.modal, true)
@@ -77,28 +79,29 @@ try {
       await page.screenshot({ path: join(output, 'before.png') })
     } else {
       assert.equal(scene.modal, false, 'update notices never put the host into a modal state')
-      await page.getByRole('dialog', { name: '新增合并侧栏样式' }).waitFor({ state: 'visible' })
+      await page.getByRole('dialog', { name: '按需设置费用显示' }).waitFor({ state: 'visible' })
       await page.locator('#host-action').click()
       assert.equal(await page.evaluate(() => window.clicks), 1, 'host remains clickable while the notice is open')
       await page.locator('#host-scroller').hover(); await page.mouse.wheel(0, 250)
       await page.waitForFunction(() => document.getElementById('host-scroller').scrollTop > 0)
       await page.screenshot({ path: join(output, 'after.png') })
-      await page.getByRole('button', { name: '关闭', exact: true }).focus()
+      await page.getByRole('button', { name: '关闭提示', exact: true }).focus()
       await page.keyboard.press('Escape')
-      await page.locator('dialog[open]').waitFor({ state: 'hidden' })
+      await notice.waitFor({ state: 'detached' })
       await page.evaluate(() => localStorage.clear()); await page.reload()
-      await page.locator('dialog[open]').waitFor({ state: 'attached' })
-      await page.addStyleTag({ content: 'body[data-dsh-claude-style] dialog.cm-peak-intro { display:none!important }' })
+      await page.locator('.cm-qguide').waitFor({ state: 'attached' })
+      await page.addStyleTag({ content: 'body[data-dsh-claude-style] .cm-qguide { display:none!important }' })
       await page.locator('#host-action').click()
       assert.equal(await page.evaluate(() => window.clicks), 1, 'a skin hiding an already-open notice cannot lock the host')
       await page.evaluate(() => { localStorage.clear(); window.remount() })
-      await page.waitForFunction(() => document.querySelector('dialog[open]') === null)
+      await page.locator('.cm-qguide').waitFor({ state: 'hidden' })
+      assert.equal(await page.locator(':modal').count(),0,'hidden introduction never makes the page inert')
       assert.equal(await page.evaluate(() => window.saved.filter(p => p.sidebarSummaryPromptSeen).length), 0, 'invisible notices are not persisted as read')
     }
   }
   assert.deepEqual(errors, [])
   writeFileSync(join(output, 'report.json'), JSON.stringify({ skinVersion: '0.16.3', skinCommit: '3f1a5aaf5cb11e64e07020fc08372466652155c8', reports, errors, hiddenModalReproduced: true, hostClickAndScrollPassed: true }, null, 2))
-  console.log('[ok] Actual Claude skin + 1.9.16 notice: hidden modal reproduced; patched notice preserves host clicks/scroll, Escape, and hidden-at-open recovery')
+  console.log('[ok] Actual Claude skin + 1.9.16 notice: hidden modal reproduced; unified card preserves host clicks/scroll, Escape, and hidden-at-open safety')
 } catch (error) {
   console.error({ errors, reports, body: (await page.locator('body').innerText()).slice(0, 1000) })
   throw error

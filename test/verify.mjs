@@ -1398,22 +1398,18 @@ assert.deepEqual(CODING_PLAN_PROVIDERS.scnet.credentialEnvs, [], 'scnet 不需�
   assert.ok(hostTypert.includes('quotaStrip: z.object({') && hostTypert.includes('promptSeen: z.boolean()'), 'typert 声明 quotaStrip 五布尔字段')
   assert.ok(clientSource.includes("enabled: v.quotaStrip?.enabled === true"), 'parseConfig 归一 quotaStrip')
   assert.ok(clientSource.includes("slots.register(\n          { name: 'conversation.input.dock', id: 'cost-meter-qstrip'") || clientSource.includes("{ name: 'conversation.input.dock', id: 'cost-meter-qstrip'"), '横条挂 conversation.input.dock(输入卡片上方)')
-  assert.ok(clientSource.includes("id: 'cost-meter-qstrip-guide'"), '引导卡挂常驻 sidebar 插槽')
-  assert.ok(clientSource.includes('function QuotaStrip(') && clientSource.includes('function QuotaStripGuide('), '两个组件定义存在')
-  assert.ok(clientSource.includes("if (config.quotaStrip?.promptSeen === true) return null"), '引导卡按 promptSeen 门控')
+  assert.ok(clientSource.includes("id: 'cost-meter-display-onboarding'"), '统一可选引导挂常驻 sidebar 插槽')
+  assert.ok(clientSource.includes('function QuotaStrip(') && clientSource.includes('function DisplayOnboarding('), '横条和统一引导组件存在')
   assert.ok(clientSource.includes("if (strip.enabled !== true && config.goQuota?.showInComposer !== true") && clientSource.includes('function quotaInComposer('), '横条保留默认门控，并允许单家显式选择输入框上方')
   assert.ok(clientSource.includes('cm-qstrip') && clientSource.includes('cm-qchip') && clientSource.includes('cm-qguide'), '横条/引导卡 CSS 类存在')
   assert.ok(readFileSync(new URL('../src/display/index.js', import.meta.url), 'utf8').includes('Enable the quota strip by default') && clientSource.includes('quotaStripShowBudget') && clientSource.includes('quotaStripShowGo') && clientSource.includes('quotaStripShowPlans'), '设置 UI 开关文案存在')
-  assert.ok(clientSource.includes('quotaStripGuideTitle') && clientSource.includes('quotaStripGuideOn') && clientSource.includes('quotaStripGuideOff'), '引导卡文案存在')
-  assert.ok(clientSource.includes('quotaStripGuideBody'), '引导卡正文文案存在')
-  assert.ok(clientSource.includes('promptSeen: true } })'), '设置开关与引导选择均写 promptSeen')
   assert.ok(clientSource.includes("const STRIP_VENDOR_SHORT = {"), '厂商短标签映射存在')
   assert.ok(clientSource.includes('commandcode: \'CC\'') && clientSource.includes('scnet: \'SCNet\''), '短标签覆盖八家厂商')
   // 点击刷新 + 厂商多窗口融合(issue #52)。
   assert.ok(clientSource.includes('.cm-qchip .cm-qbar{display:block;') && clientSource.includes('.cm-qchip .cm-qfill{display:block;'), '进度条填充 display:block(行内盒宽高被忽略的根因修复)')
   assert.ok(clientSource.includes('.cm-qchip.action{cursor:pointer') && clientSource.includes('.cm-qchip.action:focus-visible') && clientSource.includes('.cm-qchip.action:active'), '可点击 chip 手型/焦点环/按压态样式')
   assert.ok(clientSource.includes('const [busyKey, setBusyKey] = useState(null)'), 'busyKey useState 存在')
-  const qstripBody = clientSource.slice(clientSource.indexOf('function QuotaStrip('), clientSource.indexOf('function QuotaStripGuide('))
+  const qstripBody = clientSource.slice(clientSource.indexOf('function QuotaStrip('), clientSource.indexOf('function DisplayOnboarding('))
   assert.ok(qstripBody.indexOf('const [busyKey, setBusyKey] = useState(null)') < qstripBody.indexOf('if (!state) return null'), 'Hook 先于条件返回(React 规则)')
   assert.ok(clientSource.includes("key === 'budget' ? api.reload()") && clientSource.includes("key === 'go' ? api.refreshGoQuota()") && clientSource.includes("api.refreshCodingPlan(key)"), '点击按 key 多路分发刷新')
   assert.ok(clientSource.includes("key === 'codex' ? fetchCodexQuota(true, config.codexQuotaEnabled === true, config.codexQuotaSource)"), 'Codex chip 点击仅在开启后重探')
@@ -1460,28 +1456,16 @@ assert.deepEqual(CODING_PLAN_PROVIDERS.scnet.credentialEnvs, [], 'scnet 不需�
   assert.ok(clientSource.includes('@keyframes cm-click-refresh-pulse') && clientSource.includes('.cm-bbox.clickable.busy,.cm-foot.clickable.busy'), '刷新中 busy 呼吸动画')
   // tooltip 附加行:提示语/刷新中/失败原因。
   assert.ok(clientSource.includes('function clickRefreshTipLines(') && clientSource.includes("t('clickToRefresh')"), 'tooltip 含「点击立即刷新」提示行')
-  // 更新后的引导卡:门控 + 挂常驻插槽 + 永久消失标记。
-  assert.ok(clientSource.includes('function BalanceClickGuide('), 'BalanceClickGuide 组件定义存在')
-  assert.ok(clientSource.includes('function BalanceClickGuide(') && clientSource.indexOf('function BalanceClickGuide(') < clientSource.indexOf('function BudgetBoxContent('), 'BalanceClickGuide 位于组件区')
-  assert.ok(clientSource.includes('if (dismissed || lsSeen || config.balance?.clickHintSeen === true || (!sidebarBalanceOn && !sidebarCustomOn && !sidebarPlansOn)) return null'), '引导卡按 dismissed(乐观)/lsSeen(本地)/clickHintSeen + 侧边栏可见性门控')
-  // 串行展示:横条引导未处理完(promptSeen)时本卡不出现,避免两张 fixed 顶部卡片重叠互顶。
-  assert.ok(clientSource.includes('if (config.quotaStrip?.promptSeen !== true) return null'), '引导卡等横条引导处理完再出现(防 fixed 卡片重叠)')
-  // 已读提醒不依赖设置 RPC 成功；拒绝、同步抛错与迟到失败均不重新弹出。
-  const balanceGuideSource = readFileSync(new URL('../src/notices/index.js', import.meta.url), 'utf8')
-  assert.ok(balanceGuideSource.includes('setDismissed(true)') && !balanceGuideSource.includes('setDismissed(false)'), '已读不因保存失败重现')
-  assert.ok(balanceGuideSource.includes('return el(FloatingCard,') && balanceGuideSource.includes("'data-cm-action': 'dismiss'"), '余额提醒使用共享可交互顶层浮卡')
-  // 已读标记双通道:localStorage 本地兜底(刷新后重现修复)。
-  // 根因:服务端/网关运行旧版 typert schema 时,decode 的 zod parse 会剥离 schema 未声明的键,
-  // clickHintSeen(v1.5.32 新增声明)在 RPC 链路上被剥掉,客户端永远读不到 true。
-  // localStorage 不经 RPC,对版本错位/dev-link 场景免疫;读经 useState 惰性初始化(每挂载读一次)。
-  assert.ok(clientSource.includes("const BALANCE_CLICK_HINT_LS_KEY = 'dsh-cost-meter:balance-click-hint-seen'"), 'localStorage 键名常量存在')
-  assert.ok(clientSource.includes('useState(readBalanceClickHintLS)'), 'lsSeen 经 useState 惰性初始化(读一次)')
-  assert.ok(clientSource.includes("try { return window.localStorage.getItem(BALANCE_CLICK_HINT_LS_KEY) === '1' } catch (_) { return false }"), 'localStorage 读有 try-catch(隐私模式兜底)')
-  assert.ok(clientSource.includes('writeBalanceClickHintLS() // 本地兜底同步落点,不依赖 RPC 成败'), 'dismiss 同步写 localStorage(先于 RPC,不受其成败影响)')
-  assert.ok(clientSource.includes("id: 'cost-meter-balance-click-guide'"), '引导卡挂常驻 sidebar.footer.action 插槽')
-  assert.ok(clientSource.includes('clickHintSeen: true } })'), '「知道了」写回 clickHintSeen=true')
+  // #429 folds the refresh explanation into one guide; lifecycle tests retain the
+  // 1.9.42 guarantees (immediate dismissal, old hosts, capture safety and remounts).
+  assert.ok(clientSource.includes('function DisplayOnboarding('), '统一引导组件存在')
+  const notice = readFileSync(new URL('../src/notices/index.js', import.meta.url), 'utf8')
+  assert.ok(notice.includes('return el(FloatingCard,') && notice.includes("'data-cm-action': 'dismiss'"), '统一引导复用顶层可交互浮卡')
+  assert.ok(notice.includes("t('balanceClickGuideBody')"), '点击刷新和失败保留旧值说明没有丢失')
+  assert.ok(notice.includes("patch.balance = { clickHintSeen: true }"), '仅写已读标记，不覆盖余额设置')
+  assert.ok(notice.includes('dsh-cost-meter:balance-click-hint-seen'), '旧版本余额提示关闭记录仍迁移')
   // 双语文案:四个 key 在 zh/en 两张表各出现一次(键名出现 ≥ 2 次)。
-  for (const key of ['clickToRefresh:', 'balanceClickGuideTitle:', 'balanceClickGuideBody:', 'balanceClickGuideOk:']) {
+  for (const key of ['clickToRefresh:', 'balanceClickGuideBody:', 'balanceClickGuideOk:']) {
     assert.ok((clientSource.split(key).length - 1) >= 2, '双语文案:' + key + ' zh/en 均存在')
   }
   console.log('[ok] 点击余额图框立即刷新(配置标记/六类图框接线/防连点/a11y/更新后引导卡)通过')
@@ -1609,10 +1593,8 @@ assert.deepEqual(CODING_PLAN_PROVIDERS.scnet.credentialEnvs, [], 'scnet 不需�
   // 真实 client.js:全库零违规。
   const violations = scanHookOrder(hookSrc)
   assert.equal(violations.length, 0, 'Hook 顺序门禁:所有组件的 Hook 均在组件级条件 return 之前(React #300 回归):' + JSON.stringify(violations))
-  // QuotaStripGuide 定点断言:useRef 必须先于首个 return null(issue #32 修复点)。
-  const guideStart = hookSrc.indexOf('function QuotaStripGuide(')
-  const guideBody = hookSrc.slice(guideStart, hookSrc.indexOf('function BudgetBoxContent(', guideStart))
-  assert.ok(guideBody.indexOf('useRef(false)') >= 0 && guideBody.indexOf('useRef(false)') < guideBody.indexOf('if (!state) return null'), 'QuotaStripGuide 的 useRef 在条件返回之前(Hook 顺序稳定)')
+  const notice = readFileSync(new URL('../src/notices/index.js', import.meta.url), 'utf8')
+  assert.equal(scanHookOrder(notice).length, 0, '统一引导在状态/已读翻转时 Hook 顺序稳定')
   console.log('[ok] Hook 顺序门禁(组件级 return 后无 Hook 调用/门禁自检/全库扫描)通过')
 }
 // getDaySessions(issue #22):按需读取某天完整记录(含会话明细)。
@@ -7002,6 +6984,12 @@ await import('./ledger-frozen-fx.mjs')
 await import('./session-cost-display-fx.mjs')
 await import('./billion-context-billing.mjs')
 await import('./billion-context-compatibility.mjs')
+{
+  // This fixture instruments fs/timers; keep it out of other tests' process.
+  const peerTest = spawnSync(process.execPath, ['test/billion-context-peer.mjs'], { cwd: join(import.meta.dirname, '..'), encoding: 'utf8' })
+  assert.equal(peerTest.status, 0, peerTest.stderr || peerTest.stdout)
+  console.log(peerTest.stdout.trim())
+}
 await import('./billion-context-auto.mjs')
 await import('./billion-context-receipts.mjs')
 await import('./opendesign.mjs')
@@ -7040,5 +7028,6 @@ await import('./review-io-lifecycle.mjs')
 await import('./sidebar-text-only.mjs')
 
 await import('./balance-notice-loading.mjs')
+await import('./display-onboarding.mjs')
 
 await import('./official-price-sync-currency.mjs')

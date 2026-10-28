@@ -1,4 +1,4 @@
-// Actual lazy module, config codec, native dialog and persistent intro behavior.
+// Actual lazy module and config/RPC codec; #429 retires automatic peak introductions in favor of unified display guidance.
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync, mkdirSync, existsSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -17,7 +17,7 @@ assert.equal(applyConfigPatch(saved, { peakStyle: 'progress', peakTimeDisplay: '
 for (const patch of [{ peakStyle: 'invalid' }, { peakTimeDisplay: 'invalid' }, { peakProgressPromptSeen: 'yes' }]) assert.ok(applyConfigPatch(saved, patch).errors.length)
 assert.equal(sanitizeConfig({ peakStyle: 'classic' }).peakStyle, 'classic')
 const client = readdirSync('src/client').filter(n => n.endsWith('.js')).sort().map(n => readFileSync('src/client/' + n, 'utf8')).join('')
-  .replace('exports.apply = apply', 'exports.peakTest = { PeakProgress, PeakProgressGuide, parseConfig, peakPhaseAt, makeT, css }; exports.apply = apply')
+  .replace('exports.apply = apply', 'exports.peakTest = { PeakProgress, parseConfig, peakPhaseAt, makeT, css }; exports.apply = apply')
 const code = `
 import * as ReactDOMPortal from ${literal(req.resolve('react-dom'))};import React from ${literal(req.resolve('react'))};import{createRoot}from ${literal(req.resolve('react-dom/client'))};
 const h=React.createElement;let imports=0;const mainRequire=name=>name==='react'?React:{Tooltip:({children})=>children};mainRequire.async=async path=>{if(path!=='./client.peak.js')throw Error(path);imports++;return window.peakUI};
@@ -25,17 +25,19 @@ window.__ModuleLoader__={load:mod=>window.mainUI=mod.factory(mainRequire)};
 ${client}
 window.__ModuleLoader__={load:mod=>window.peakUI=mod.factory(name=>name==='react-dom'?ReactDOMPortal:React)};
 ${readFileSync('lib/client.peak.js','utf8')}
-const {PeakProgress,PeakProgressGuide,parseConfig,peakPhaseAt,makeT,css}=window.mainUI.peakTest;let config=parseConfig(window.__initial,'config');let listeners=new Set(),now=Date.parse('2026-10-19T08:40:00Z');
+const {PeakProgress,parseConfig,peakPhaseAt,makeT,css}=window.mainUI.peakTest;let config=parseConfig(window.__initial,'config');let listeners=new Set(),now=Date.parse('2026-10-19T08:40:00Z');
 window.snapshot=()=>config;window.imports=()=>imports;window.phase=(at)=>peakPhaseAt(at,config.peakWindows,config.peakHolidays);window.failSave=false;window.deferSave=false;window.saveCalls=0;
 function publish(){for(const fn of listeners)fn(config)}window.configure=patch=>{config=parseConfig({...config,...patch},'config');publish()};
 const api={updateConfig:async patch=>{window.saveCalls++;if(window.failSave)throw Error('offline');if(window.deferSave)await new Promise(resolve=>window.finishSave=resolve);config=parseConfig(await window.persist(patch),'config');publish();return{config}}};
+window.applySettings=patch=>api.updateConfig(patch);
 function useCost(){const[value,setValue]=React.useState(config);React.useEffect(()=>{listeners.add(setValue);return()=>listeners.delete(setValue)},[]);return{state:{config:value}}}
-function App(){const state=useCost();const c=state.state.config;return h(React.Fragment,null,h('style',null,css),h('button',{id:'focus-target'},'页面入口'),h('main',{id:'bars'},c.peakEnabled&&c.peakNotice&&c.peakStyle==='progress'?['full','simple','compact'].map(v=>h('section',{key:v,className:'sample'},h(PeakProgress,{config:{...c,peakProgressVariant:v},t:makeT('zh'),now}))):null),h(PeakProgressGuide,{useCost,api}))}
+function App(){const state=useCost();const c=state.state.config;return h(React.Fragment,null,h('style',null,css),h('button',{id:'focus-target'},'页面入口'),h('main',{id:'bars'},c.peakEnabled&&c.peakNotice&&c.peakStyle==='progress'?['full','simple','compact'].map(v=>h('section',{key:v,className:'sample'},h(PeakProgress,{config:{...c,peakProgressVariant:v},t:makeT('zh'),now}))):null))}
 const root=createRoot(document.getElementById('root'));window.remount=()=>root.render(h(App,{key:Math.random()}));window.showAt=at=>{now=at;publish()};window.remount();
 `
 const compiled = await build({ stdin:{contents:code,resolveDir:process.cwd(),loader:'js'},bundle:true,write:false,format:'iife',platform:'browser' })
 const theme = readFileSync('test/fixtures/peak-theme.css','utf8')
 const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${theme}#bars{display:grid;gap:12px;width:300px}.sample{border:1px solid var(--dsw-alias-border-l1);padding:10px;min-width:0}dialog .cm-peak-progress{max-width:100%}</style></head><body><div id="root"></div><script>window.__initial=__INITIAL_CONFIG__</script><script src="/app.js"></script></body></html>`
+if (process.argv.includes('--compile-only')) { console.log('[ok] peak progress fixture bundled'); process.exit(0) }
 const server = createServer((request,response)=>{response.setHeader('content-type',request.url==='/app.js'?'text/javascript':'text/html;charset=utf-8');response.end(request.url==='/app.js'?compiled.outputFiles[0].contents:html.replace('__INITIAL_CONFIG__',()=>literal(saved)))})
 await new Promise(done=>server.listen(0,'127.0.0.1',done))
 const url=`http://127.0.0.1:${server.address().port}/`
@@ -46,7 +48,7 @@ const errors=[],external=[]
 page.on('pageerror',e=>errors.push(e.message))
 await page.route('**/*',route=>new URL(route.request().url()).origin===new URL(url).origin?route.continue():(external.push(route.request().url()),route.abort()))
 await page.exposeFunction('persist',patch=>{const result=applyConfigPatch(saved,patch);assert.deepEqual(result.errors,[]);saved=stateSchema.shape.config.parse(sanitizeConfig(result.config));return saved})
-const dialog=()=>page.getByRole('dialog',{name:'峰谷时段新增进度条',exact:true})
+const dialog=()=>page.locator('.cm-peak-intro')
 const open=async config=>{saved=sanitizeConfig({...saved,...config});await page.goto(url);await page.evaluate(()=>{localStorage.clear();window.remount()})}
 try {
   await open({peakEnabled:false,peakProgressPromptSeen:false})
@@ -56,36 +58,14 @@ try {
   assert.equal(await dialog().count(),0)
   assert.equal(await page.evaluate(()=>window.imports()),0,'hidden period strip does not load the introduction')
   await page.evaluate(()=>window.configure({peakNotice:true}))
-  await dialog().waitFor({state:'visible'})
-  assert.equal(await dialog().locator('.cm-peak-progress').count(),3)
-  await page.setViewportSize({width:390,height:850})
-  assert.equal(await dialog().evaluate(n=>n.scrollWidth>n.clientWidth),false)
-  await dialog().screenshot({path:join(output,'installed-intro-light.png')})
-  await dialog().getByRole('combobox',{name:'显示时间',exact:true}).selectOption('switch')
+  assert.equal(await dialog().count(),0,'peak display no longer opens its own introduction')
+  assert.equal(await page.evaluate(()=>window.imports()),0,'unchanged legacy style does not load the progress chunk')
   await page.evaluate(()=>window.failSave=true)
-  await dialog().getByRole('button',{name:'使用进度条',exact:true}).click()
-  await dialog().getByRole('alert').waitFor()
-  assert.equal(await page.evaluate(()=>window.snapshot().peakStyle),'compact','failed save retains original style')
-  await dialog().getByRole('button',{name:'关闭',exact:true}).click()
-  await dialog().waitFor({state:'hidden'})
-  await page.evaluate(()=>{window.remount()})
-  assert.equal(await dialog().count(),0,'closing works when RPC fails; remount does not repeat')
-
-  await open({peakProgressPromptSeen:false,peakStyle:'classic',peakEnabled:true,peakNotice:true})
-  await dialog().waitFor({state:'visible'})
-  await dialog().getByRole('button',{name:'保留原样',exact:true}).click()
-  await page.waitForFunction(()=>window.snapshot().peakProgressPromptSeen===true)
-  assert.equal(saved.peakStyle,'classic','keeping original style does not overwrite it')
-  await page.reload();assert.equal(await dialog().count(),0,'host-persisted seen flag survives reload')
-
-  saved={...saved,peakProgressPromptSeen:false}
-  await open({peakProgressPromptSeen:false,peakStyle:'compact'})
-  await dialog().waitFor({state:'visible'})
-  await dialog().getByRole('combobox',{name:'显示时间',exact:true}).selectOption('both')
-  await dialog().getByRole('button',{name:'使用进度条',exact:true}).click()
-  await page.waitForFunction(()=>window.snapshot().peakStyle==='progress'&&window.snapshot().peakProgressPromptSeen)
-  await dialog().waitFor({state:'hidden'})
-  assert.equal(saved.peakTimeDisplay,'both')
+  const failed=await page.evaluate(()=>window.applySettings({peakStyle:'progress'}).then(()=>false,()=>true))
+  assert.equal(failed,true); assert.equal(await page.evaluate(()=>window.snapshot().peakStyle),'compact','failed settings save retains original style')
+  await page.evaluate(()=>{window.failSave=false;return window.applySettings({peakEnabled:true,peakNotice:true,peakStyle:'progress',peakTimeDisplay:'both',peakProgressPromptSeen:true})})
+  assert.equal(saved.peakStyle,'progress'); assert.equal(saved.peakTimeDisplay,'both')
+  await page.setViewportSize({width:390,height:850})
   const bars=page.locator('#bars .cm-peak-progress')
   await bars.first().waitFor()
   const metrics=await bars.evaluateAll(ns=>ns.map(n=>({variant:n.dataset.variant,height:n.getBoundingClientRect().height,overflow:n.scrollWidth>n.clientWidth})))
@@ -99,13 +79,13 @@ try {
     await page.evaluate(at=>window.showAt(Date.parse(at)),at)
     assert.equal(await bars.evaluateAll(ns=>ns.some(n=>n.scrollWidth>n.clientWidth)),false)
   }
+  await page.screenshot({path:join(output,'progress-light.png')})
   await page.evaluate(()=>{document.documentElement.dataset.theme='dark';window.configure({peakProgressPromptSeen:false})})
-  // Explicitly simulate a fresh updated browser for dark-theme introduction.
-  await page.reload();await page.evaluate(()=>{localStorage.clear();document.documentElement.dataset.theme='dark';window.configure({peakProgressPromptSeen:false});window.remount()})
-  await dialog().waitFor({state:'visible'})
-  await dialog().screenshot({path:join(output,'installed-intro-dark.png')})
-  await page.keyboard.press('Escape');await dialog().waitFor({state:'hidden'})
+  await page.reload();await page.evaluate(()=>{document.documentElement.dataset.theme='dark';window.remount()})
+  await bars.first().waitFor()
+  assert.equal(await dialog().count(),0,'no retired peak guide returns after remount/reload')
+  await page.screenshot({path:join(output,'progress-dark.png')})
   assert.deepEqual(errors,[]);assert.deepEqual(external,[])
-  writeFileSync(join(output,'integration-report.json'),JSON.stringify({passed:true,metrics,externalRequests:external,browserErrors:errors,configRoundTrip:true,disabledGating:true,dismissAfterFailure:true,retainedStyle:true,persistedSeen:true},null,2))
-  console.log('[ok] Peak progress: real lazy chunk, config/RPC codec, intro gating/keep/apply/close/Escape, persistence and compact layouts')
+  writeFileSync(join(output,'integration-report.json'),JSON.stringify({passed:true,metrics,externalRequests:external,browserErrors:errors,configRoundTrip:true,disabledGating:true,failedSettingsRetainStyle:true,retiredIntroduction:true,persistedSettings:true},null,2))
+  console.log('[ok] Peak progress: real lazy chunk, config/RPC codec, retired intro, settings persistence and compact layouts')
 } finally { await browser.close();await new Promise(done=>server.close(done)) }

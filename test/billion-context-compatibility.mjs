@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { patchBillionRuntime } from '../scripts/billion-context-patch.mjs'
 import { buildBillionCompatibility } from '../scripts/build-billion-context-compat.mjs'
 import { billionVersionSupported } from '../lib/billion-context-compatibility.js'
@@ -49,13 +50,17 @@ try {
   await assert.rejects(buildBillionCompatibility(pkg, root, { pack: false }), { code: 'BILLION_VERSION_TOO_OLD' })
   let version = '0.1.180'
   ledger = new Ledger(sanitizeConfig({}), {}, join(root, 'ledger.json'))
-  const ctx = { effect(register) { effects.push(register()) }, on() {}, get: name => name === 'pluginManager'
-    ? { listBundles: async () => [{ name: 'billion-context', enabled: true, version }] } : undefined }
+  const peerDir = join(root, 'node_modules/billion-context')
+  mkdirSync(peerDir, { recursive: true })
+  const peer = { options: { name: 'billion-context' }, disabled: false, fiber: { state: 2 }, parent: { tree: { ctx: { baseUrl: pathToFileURL(join(root, 'package.json')).href } } } }
+  const publishPeer = () => { writeFileSync(join(peerDir, 'package.json'), JSON.stringify({ name: 'billion-context', version })); peer.fiber = { state: 2 } }
+  publishPeer()
+  const ctx = { effect(register) { effects.push(register()) }, on() {}, get: name => name === 'loader' ? { entries: () => [peer] } : undefined }
   bridge = installBillionContextBilling(ctx, ledger)
   await bridge.refreshPeer()
   assert.equal(bridge.status().compatibility, 'needs_update')
   assert.equal(bridge.status().noticeId, 'needs_update:0.1.180')
-  version = '0.1.999'; await bridge.refreshPeer(true)
+  version = '0.1.999'; publishPeer(); await bridge.refreshPeer(true)
   assert.equal(bridge.status().compatibility, 'unknown', 'a version bump alone never means an incompatible interface')
   assert.equal(bridge.status().noticeId, '')
   const scope = bridge.createScope({ sessionId: 'local', provider: 'fixture', model: 'main' }, Date.now())

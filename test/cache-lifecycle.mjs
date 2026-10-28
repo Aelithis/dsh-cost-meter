@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { setImmediate as tick } from 'node:timers/promises'
+import { setImmediate as tick, setTimeout as wait } from 'node:timers/promises'
 import { apply } from '../lib/index.js'
 import { stateSchema } from '../lib/typert.host.js'
 import { GATEWAY_MANAGEMENT_PATHS, managementKeyVarOf } from '../lib/gateway-quotas.js'
@@ -19,7 +19,12 @@ const deferred = () => {
   return { promise, resolve }
 }
 const until = async predicate => {
-  for (let i = 0; i < 200; i++) { if (predicate()) return; await tick() }
+  // Local snapshots include asynchronous filesystem reads. A fixed number
+  // of setImmediate spins can expire in milliseconds before that I/O settles.
+  // The request gate stays blocked, so this still fails if local state waits
+  // for the network; only the scheduling budget is wall-clock based.
+  const deadline = performance.now() + 2000
+  while (performance.now() < deadline) { if (predicate()) return; await wait(1) }
   throw new Error('fixture did not reach the expected request')
 }
 const fixture = async (config, fetchImpl, run) => {

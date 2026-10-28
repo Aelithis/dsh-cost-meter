@@ -7,6 +7,10 @@ import { resolve, join } from 'node:path'
 import { build } from 'esbuild'
 import { sanitizeConfig, zeroDay } from '../lib/store.js'
 
+if (!process.argv.includes('--baseline')) {
+  const { runDisplayOnboardingBrowser } = await import('./display-onboarding-browser.mjs')
+  await runDisplayOnboardingBrowser('lifecycle')
+} else {
 const baseline = process.argv.includes('--baseline')
 const output = resolve('.tmp-balance-notice'); mkdirSync(output, { recursive: true })
 const req = createRequire(resolve(process.env.DSH_TEST_UI_MODULES ?? '.tmp-ui-host/node_modules', '__notice.cjs'))
@@ -35,6 +39,7 @@ window.copies=1;function App(){return React.createElement(React.Fragment,null,Ar
 const root=createRoot(document.getElementById('root'));let generation=0;window.remount=()=>root.render(React.createElement(App,{key:++generation}));window.remount();
 window.dispose=()=>{root.unmount();for(const d of disposers.reverse())d()};window.ready=true;
 `, resolveDir: process.cwd() }, bundle: true, write: false, format: 'esm', platform: 'browser' })).outputFiles[0].contents
+if (process.argv.includes('--compile-only')) { console.log('[ok] historical balance fixture bundled'); process.exit(0) }
 const server = createServer((request, response) => {
   if (request.url === '/app.js') { response.setHeader('content-type', 'text/javascript'); response.end(bundle); return }
   response.setHeader('content-type', 'text/html; charset=utf-8')
@@ -69,37 +74,9 @@ try {
     await fresh(); await intercept(); await guide().getByRole('button',{name:'知道了',exact:true}).click();
     assert.equal(await page.evaluate(()=>window.saves),0); assert.ok(await page.evaluate(()=>window.intercepts)>0);
     await page.screenshot({path:join(output,'before-intercepted.png')}); reports.push({case:'document capture conflict',clickBlocked:true});
-  } else {
-    for(const skin of ['dark','light','glass'])for(const width of [390,1200]){
-      await page.setViewportSize({width,height:800});await fresh(skin);await intercept();
-      const button=guide().getByRole('button',{name:'知道了',exact:true});
-      assert.equal(await guide().evaluate(n=>n.matches(':popover-open')&&getComputedStyle(n).pointerEvents==='auto'),true);
-      const hit=await button.evaluate(n=>{const r=n.getBoundingClientRect();return n.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))});assert.equal(hit,true);
-      await page.locator('#host-button').click();assert.equal(await page.evaluate(()=>window.hostClicks),1);
-      await page.screenshot({path:join(output,`after-${skin}-${width}.png`)});
-      await button.click();await guide().waitFor({state:'detached'});await page.waitForFunction(()=>window.saves===1);
-      assert.equal(await page.evaluate(()=>window.intercepts),0);assert.deepEqual(await page.evaluate(()=>window.patches),[{balance:{clickHintSeen:true}}]);
-      await page.evaluate(()=>window.remount());assert.equal(await guide().count(),0);
-      await page.reload();await page.waitForFunction(()=>window.ready);assert.equal(await guide().count(),0);
-      reports.push({skin,width,click:true,offline:true,remount:true,reload:true});
-    }
-    for(const mode of ['ok','old','throw','pending']){
-      await fresh();await page.evaluate(mode=>window.saveMode=mode,mode);
-      const button=guide().getByRole('button',{name:'知道了',exact:true});
-      // Invoke the same real DOM button twice synchronously before React unmounts it.
-      await button.evaluate(n=>{n.click();n.click()});await guide().waitFor({state:'detached'});await page.waitForFunction(()=>window.saves===1);
-      if(mode==='pending')await page.evaluate(()=>{window.saveMode='reject';window.finishSave()});
-      await page.evaluate(()=>window.remount());assert.equal(await guide().count(),0);await page.reload();await page.waitForFunction(()=>window.ready);assert.equal(await guide().count(),0);
-      reports.push({saveMode:mode,exactlyOnce:true,persistent:true});
-    }
-    await fresh();await page.evaluate(()=>{window.copies=2;window.remount()});await page.waitForFunction(()=>document.querySelectorAll('.cm-qguide').length===2);
-    await guide().last().getByRole('button',{name:'知道了',exact:true}).click();await page.waitForFunction(()=>document.querySelectorAll('.cm-qguide').length===0);
-    assert.equal(await page.evaluate(()=>window.saves),1);
-    await fresh();await page.evaluate(()=>{Storage.prototype.setItem=()=>{throw Error('unavailable')}});
-    await guide().getByRole('button',{name:'知道了',exact:true}).click();await guide().waitFor({state:'detached'});await page.evaluate(()=>window.remount());assert.equal(await guide().count(),0);
-    await fresh();await guide().getByRole('button',{name:'知道了',exact:true}).focus();await page.keyboard.press('Escape');await guide().waitFor({state:'detached'});
-    await fresh();await intercept();await guide().getByRole('button',{name:'知道了',exact:true}).tap();await guide().waitFor({state:'detached'});assert.equal(await page.evaluate(()=>window.intercepts),0);
-    await fresh();await page.evaluate(()=>{HTMLElement.prototype.showPopover=undefined;window.remount()});await guide().getByRole('button',{name:'关闭提示',exact:true}).click();await guide().waitFor({state:'detached'});
+
   }
   assert.deepEqual(errors,[]);writeFileSync(join(output,baseline?'before.json':'after.json'),JSON.stringify({baseline,reports,errors},null,2));console.log('[ok] balance-refresh notice '+(baseline?'baseline failures reproduced':'pointer/touch/keyboard, duplicate slots, offline/old RPC, persistence and layout verified'))
 } finally { await page.evaluate(()=>window.dispose?.()).catch(()=>{});await browser.close();server.closeAllConnections();await new Promise(done=>server.close(done)) }
+
+}

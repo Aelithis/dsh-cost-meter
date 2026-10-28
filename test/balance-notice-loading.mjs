@@ -10,8 +10,8 @@ for (const file of ['src/notices/index.js', 'lib/client.notices.js']) {
   const loader=async path=>registry.get('dsh-cost-meter/'+path.replace(/^\.\//,''))
   assert.equal(await loader('./client.notices.js'),registered.factory)
   const React={createElement:(type,props,...children)=>({type,props,children}),useRef:value=>({current:value}),useState:value=>[typeof value==='function'?value():value,()=>{}],useEffect:()=>{}}
-  const Component=registered.factory(()=>React).mount({CODING_PLAN_ROWS:[],makeT:()=>key=>key,resolveLocale:()=> 'en',simpleGuideSeen:()=>true})
+  const Component=registered.factory(()=>React).mount({makeT:()=>key=>key,resolveLocale:()=> 'en'})
   assert.equal(typeof Component,'function')
   assert.equal(Component({}),null,'missing state does not render a notice')
 }
-console.log('[ok] Balance notice source/bundle: package-local chunk registration and renderable lazy mount')
+console.log('[ok] Unified notice source/bundle: package-local chunk registration and renderable lazy mount')

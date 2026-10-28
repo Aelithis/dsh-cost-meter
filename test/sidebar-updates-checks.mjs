@@ -16,25 +16,16 @@ export async function checkSidebarUpdates(page, output) {
   assert.ok(geometry.some(row => row.text === 'Codex'))
   assert.ok(geometry.every(row => row.middle === geometry[0].middle && row.left === row.right && row.height === geometry[0].height), 'Codex and every peer tab share center, padding and height')
   await page.getByRole('tab', { name: '侧栏', exact: true }).click()
-  const hidingSkin = await page.addStyleTag({ content: 'html body dialog { display:none !important; visibility:hidden !important }' })
   await page.evaluate(async () => {
     window.setFixtureState({ codexCompat: undefined, balance: { status: 'ok', totalBalance: 4.98, grantedBalance: 0, toppedUpBalance: 4.98, currency: 'CNY' }, today: { input: 16400000, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, cost: 1.23, apiCost: 1.23 } })
-    await window.configure({ sidebarSummaryPromptSeen: false, sidebar: true, hideTodayCost: false, hideOfficialBalance: false, hideBudget: true, sidebarModels: { enabled: false }, codexQuotaEnabled: false, balance: { display: 'both' }, peakEnabled: true, peakNotice: true })
-    localStorage.removeItem('dsh-cost-meter:sidebar-summary-intro-v1')
-    window.showSummaryGuide()
+    await window.configure({ sidebarSummaryPromptSeen: false, sidebarSimple: false, sidebarStyle: 'standard', sidebar: true, hideTodayCost: false, hideOfficialBalance: false, hideBudget: true, sidebarModels: { enabled: false }, codexQuotaEnabled: false, balance: { display: 'both' }, peakEnabled: true, peakNotice: true })
   })
-  const guide = page.getByRole('dialog', { name: '新增合并侧栏样式' })
-  await page.waitForFunction(() => !document.querySelector('dialog:modal'))
-  await hidingSkin.evaluate(node => node.remove())
-  await page.evaluate(() => { window.disposeSummaryGuide(); window.showSummaryGuide() })
-  await guide.waitFor({ state: 'visible' })
-  assert.equal(await guide.evaluate(node => node.matches(':modal')), false, 'update notice does not lock the host')
-  await guide.getByRole('button', { name: '使用合并卡片', exact: true }).click()
-  await guide.waitFor({ state: 'detached' })
+  // #429: summary selection is an explicit Display setting, not another automatic popup.
+  if (await page.locator('.cm-inspector-layout').getAttribute('aria-expanded') !== 'true') await page.locator('.cm-inspector-layout').click()
+  await page.getByRole('button', { name: '合并卡片', exact: true }).click()
   await page.waitForFunction(() => window.current().sidebarStyle === 'summary' && window.current().sidebarSummaryPromptSeen)
   assert.equal(await page.evaluate(() => window.current().sidebarTodayMetric), 'both')
-  await page.evaluate(() => { window.disposeSummaryGuide(); window.showSummaryGuide() })
-  assert.equal(await guide.count(), 0, 'introduction is not repeated after acknowledgement')
+  assert.equal(await page.locator('.cm-peak-intro').count(), 0, 'choosing a style does not launch retired visual introductions')
   const sidebar = page.locator('#actual-sidebar')
   await sidebar.evaluate(node => { node.style.position = 'static'; node.style.left = 'auto' })
   for (const width of [352, 280, 220]) {
@@ -79,6 +70,5 @@ export async function checkSidebarUpdates(page, output) {
   await page.locator('.cm-display-general summary').click()
   const preference = page.getByRole('switch', { name: '弹出 billion-context 计费兼容提醒', exact: true })
   assert.equal(await preference.count(), 0, 'billing accuracy is shown in settings without a popup switch')
-  await page.evaluate(() => window.disposeSummaryGuide())
-  return { combinedCard: true, introductionOnce: true, narrowWidths: [352, 280, 220], codexTabAlignment: true, noCompatibilityPopupSwitch: true }
+  return { combinedCard: true, combinedCardViaSettings: true, narrowWidths: [352, 280, 220], codexTabAlignment: true, noCompatibilityPopupSwitch: true }
 }

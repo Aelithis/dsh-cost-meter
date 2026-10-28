@@ -143,7 +143,7 @@
         hideTodayCost: v.hideTodayCost === true,
         sessionListCostPeriod: v.sessionListCostPeriod === 'today' ? 'today' : 'total',
         modelStatistics: v.modelStatistics ?? {},
-        ...mapFields(v, ['hideSessionCostHeader', 'hideSessionCostDock', 'hideTurnCost', 'followSkinTransparency', 'sidebarTodayBalanceInline', 'sessionListCosts', 'hideBudget', 'sessionCostCompact', 'contextCostsEnabled', 'contextCostsPromptSeen', 'showTotalWithPlan', 'sidebarSimple', 'sidebarSimplePromptSeen', 'codexQuotaEnabled', 'codexCompatPromptDismissed', 'includeSubagentCost', 'peakEnabled', 'peakAlertWebNotify', 'peakProgressPromptSeen'], value => value === true),
+        ...mapFields(v, ['hideSessionCostHeader', 'hideSessionCostDock', 'hideTurnCost', 'followSkinTransparency', 'sidebarTodayBalanceInline', 'sessionListCosts', 'hideBudget', 'sessionCostCompact', 'contextCostsEnabled', 'contextCostsPromptSeen', 'showTotalWithPlan', 'sidebarSimple', 'codexQuotaEnabled', 'codexCompatPromptDismissed', 'includeSubagentCost', 'peakEnabled', 'peakAlertWebNotify'], value => value === true),
         sidebarTodayMetric: ['tokens', 'both'].includes(v.sidebarTodayMetric) ? v.sidebarTodayMetric : 'cost',
         sidebarTextOnly: v.sidebarTextOnly === true,
         ...(Object.hasOwn(v, 'sidebarOrder') ? { sidebarOrder: Array.isArray(v.sidebarOrder) ? v.sidebarOrder : [] } : {}),
@@ -156,7 +156,7 @@
         // 直通白名单缺失会导致关闭后重开页面又弹提示,或应用后状态行回落「未应用」。
         codexCompatHistoryAppliedAt: num0(v.codexCompatHistoryAppliedAt),
         sidebarStyle: oneOf(v.sidebarStyle, ['standard', 'compact', 'summary'], 'standard'),
-        ...(Object.hasOwn(v, 'sidebarSummaryPromptSeen') ? { sidebarSummaryPromptSeen: v.sidebarSummaryPromptSeen === true } : {}),
+        ...mapFields(v, ['sidebarSimplePromptSeen', 'sidebarSummaryPromptSeen', 'peakProgressPromptSeen'].filter(key => Object.hasOwn(v, key)), value => value === true),
         billionContextNoticeEnabled: v.billionContextNoticeEnabled !== false,
         billionContextNoticesSeen: Array.isArray(v.billionContextNoticesSeen) ? v.billionContextNoticesSeen.filter(value => typeof value === 'string').slice(-32) : [],
         priceMatchDismissed: Array.isArray(v.priceMatchDismissed) ? v.priceMatchDismissed.filter(key => typeof key === 'string') : [],
@@ -254,7 +254,7 @@
           showSource: v.balance?.showSource === true,
           officialChannelOnly: v.balance?.officialChannelOnly === true,
           budgetCap: typeof v.balance?.budgetCap === 'number' && Number.isFinite(v.balance.budgetCap) && v.balance.budgetCap > 0 ? v.balance.budgetCap : null,
-          clickHintSeen: v.balance?.clickHintSeen === true,
+          ...(Object.hasOwn(v.balance ?? {}, 'clickHintSeen') ? { clickHintSeen: v.balance?.clickHintSeen === true } : {}),
         },
         goQuota: {
           enabled: v.goQuota?.enabled !== false,
@@ -303,7 +303,7 @@
           budget: v.quotaStrip?.budget !== false,
           go: v.quotaStrip?.go !== false,
           plans: v.quotaStrip?.plans !== false,
-          promptSeen: v.quotaStrip?.promptSeen === true,
+          ...(Object.hasOwn(v.quotaStrip ?? {}, 'promptSeen') ? { promptSeen: v.quotaStrip?.promptSeen === true } : {}),
         },
         usage: {
           position: v.usage?.position === 'general' || v.usage?.position === 'section' ? v.usage.position : 'cost',
@@ -2412,20 +2412,11 @@
     // 进度条与首次介绍共用按需模块，不增加旧样式的定时器和主包体积。
     let peakPage
     function loadPeakPage() {
-      return peakPage ??= require.async('./client.peak.js').then(module => module.mount({ peakView, peakPhaseAt, peakPhaseForConfig, peakConfigForState, phaseLabelKeys, countdownText, resolveLocale, makeT, Tooltip, FloatingCard, renderSidebarFooter }))
+      return peakPage ??= require.async('./client.peak.js').then(module => module.mount({ peakView, peakPhaseAt, peakPhaseForConfig, peakConfigForState, phaseLabelKeys, countdownText, resolveLocale, makeT, Tooltip, FloatingCard }))
         .catch(error => { peakPage = null; throw error })
     }
     function PeakProgress(props) {
       return el(BillingStatistics, { ...props, load: loadPeakPage, quiet: true })
-    }
-    function SidebarSummaryGuide(props) {
-      const state = props.useCost?.(s => s)?.state
-      return state && state.config.sidebar !== false && !state.config.sidebarSummaryPromptSeen ? el(PeakProgress, { ...props, state, config: state.config, view: 'summary-guide' }) : null
-    }
-    function PeakProgressGuide(props) {
-      const state = props.useCost?.(s => s)?.state, config = state?.config
-      return config?.peakEnabled && config.peakNotice !== false && !config.peakProgressPromptSeen
-        ? el(PeakProgress, { ...props, state, config, view: 'guide' }) : null
     }
     function peakNoticeEl(state, config, t) {
       if (config.sidebarTextOnly === true) return el(PeakProgress, { config, t })
@@ -3281,87 +3272,13 @@
         }))
     }
 
-    // 首次更新后的功能引导:非模态小卡片,让用户自主决定是否开启额度横条;
-    // 选择「开启/暂不」后写回 promptSeen=true 永久消失(挂在常驻 sidebar.footer.action)。
-    const SIMPLE_GUIDE_KEY = 'dsh-cost-meter:simple-guide-dismissed'
-    function simpleGuideSeen(config) {
-      if (config?.sidebarSimplePromptSeen === true) return true
-      try { return window.localStorage.getItem(SIMPLE_GUIDE_KEY) === '1' } catch (_) { return false }
-    }
-    function SidebarSimpleGuide(props) {
-      const store = props.useCost ? props.useCost(s => s) : undefined
-      const busyRef = useRef(false)
-      const [pending, setPending] = useState(false)
-      const [failed, setFailed] = useState(false)
-      const [dismissed, setDismissed] = useState(false)
-      const config = store?.state?.config
-      const visible = !!config && !dismissed && !simpleGuideSeen(config)
-      useEffect(() => {
-        const hide = () => setDismissed(true)
-        window.addEventListener?.(SIMPLE_GUIDE_KEY, hide)
-        return () => window.removeEventListener?.(SIMPLE_GUIDE_KEY, hide)
-      }, [])
-      if (!visible) return null
-      const t = makeT(resolveLocale(config))
-      const dismiss = () => {
-        setDismissed(true)
-        try { window.localStorage.setItem(SIMPLE_GUIDE_KEY, '1') } catch (_) { /* 本次页面仍可关闭 */ }
-        window.dispatchEvent?.(new Event(SIMPLE_GUIDE_KEY))
-      }
-      const choose = async enabled => {
-        if (busyRef.current) return
-        busyRef.current = true
-        setPending(true); setFailed(false)
-        try {
-          const saved = await props.api.updateConfig({ sidebarSimple: enabled, sidebarSimplePromptSeen: true })
-          if (saved?.config?.sidebarSimple !== enabled) throw new Error()
-          dismiss()
-        } catch (_) { setFailed(true) }
-        finally { busyRef.current = false; setPending(false) }
-      }
-      return el(FloatingCard, { actions: { close: dismiss, keep: () => choose(false), enable: () => choose(true) }, className: 'cm-qguide', role: 'dialog', 'aria-label': t('sidebarSimpleTitle'), 'aria-busy': pending, onKeyDown: event => { if (event.key === 'Escape') { event.stopPropagation(); dismiss() } } },
-        el('div', { className: 'cm-bbox-head' }, el('h4', null, t('sidebarSimpleTitle')),
-          el('button', { type: 'button', className: 'cm-btn small', 'aria-label': t('closeGuide'), 'data-cm-action': 'close', onClick: dismiss }, '×')),
-        el('p', null, t('sidebarSimpleBody')),
-        failed ? el('p', { role: 'alert' }, t('sidebarSimpleError')) : null,
-        el('div', { className: 'cm-buttons' },
-          el('button', { type: 'button', className: 'cm-btn small', 'data-cm-action': 'keep', disabled: pending, onClick: () => choose(false) }, t('sidebarSimpleOff')),
-          el('button', { type: 'button', className: 'cm-btn small primary', 'data-cm-action': 'enable', disabled: pending, onClick: () => choose(true) }, t('sidebarSimpleOn'))))
-    }
-
-    function QuotaStripGuide(props) {
-      // 所有 Hook 必须在任何条件返回之前调用:promptSeen 从 false 翻为 true 时本组件
-      // 会从「渲染引导卡」变为提前 return null,若 useRef 在条件返回之后,两次渲染
-      // 的 Hook 数量不一致,触发 React #300(Rendered fewer hooks than expected)。
-      const costStore = props.useCost ? props.useCost(s => s) : undefined
-      const busyRef = useRef(false)
-      const state = costStore?.state
-      if (!state) return null
-      const config = state.config
-      if (!simpleGuideSeen(config)) return null
-      if (config.quotaStrip?.promptSeen === true) return null
-      const t = makeT(resolveLocale(config))
-      const choose = enabled => {
-        if (busyRef.current === true) return
-        busyRef.current = true
-        const current = config.quotaStrip ?? { enabled: false, budget: true, go: true, plans: true }
-        props.api.updateConfig({ quotaStrip: { ...current, enabled, promptSeen: true } })
-          .catch(() => { busyRef.current = false })
-      }
-      return el('div', { className: 'cm-qguide', role: 'dialog', 'aria-label': t('quotaStripGuideTitle') },
-        el('h4', null, t('quotaStripGuideTitle')),
-        el('p', null, t('quotaStripGuideBody')),
-        el('div', { className: 'cm-buttons' },
-          el('button', { type: 'button', className: 'cm-btn small', onClick: () => choose(false) }, t('quotaStripGuideOff')),
-          el('button', { type: 'button', className: 'cm-btn small primary', onClick: () => choose(true) }, t('quotaStripGuideOn'))))
-    }
-
-    let balanceGuidePage
-    function BalanceClickGuide(props) {
+    // One optional first-run entry replaces the five accumulated visual announcements.
+    let displayOnboardingPage
+    function DisplayOnboarding(props) {
       const [Component, setComponent] = useState(null)
       useEffect(() => {
         let live = true
-        const page = balanceGuidePage ??= require.async('./client.notices.js').then(module => module.mount({ FloatingCard, CODING_PLAN_ROWS, makeT, resolveLocale, simpleGuideSeen })).catch(error => { balanceGuidePage = null; throw error })
+        const page = displayOnboardingPage ??= require.async('./client.notices.js').then(module => module.mount({ FloatingCard, makeT, resolveLocale })).catch(error => { displayOnboardingPage = null; throw error })
         page.then(value => { if (live) setComponent(() => value) }).catch(() => {})
         return () => { live = false }
       }, [])
