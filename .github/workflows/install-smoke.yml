@@ -73,6 +73,13 @@ jobs:
           export DSH_CONTEXT_068="$PWD/.tmp-context-068/package/lib/client.js"
           export CM_TEST_BROWSER=/usr/bin/google-chrome
           test -x "$CM_TEST_BROWSER" || (sudo apt-get update && sudo apt-get install -y google-chrome-stable)
+          if ! fc-list :lang=zh | grep -q .; then sudo apt-get update && sudo apt-get install -y fonts-noto-cjk; fi
+          node test/balance-notice.mjs
+          git fetch --depth=1 origin aa41d946c475b9e37ee11362e0e130df816d52b0
+          git show aa41d946c475b9e37ee11362e0e130df816d52b0:lib/client.js > .tmp-balance-notice-before.js
+          node test/balance-notice-browser.mjs --baseline
+          node test/balance-notice-browser.mjs
+          node test/display-settings-browser.mjs --text-only-only
           mkdir -p .tmp-billion-matrix
           npm pack dsh-codex-subscription@3.1.2 --ignore-scripts --pack-destination .tmp-billion-matrix
           DSH_TEST_CODEX_PACKAGE="$PWD/.tmp-billion-matrix/dsh-codex-subscription-3.1.2.tgz" node test/codex-subscription-published.mjs
@@ -119,15 +126,9 @@ jobs:
           node test/factory-quota-browser.mjs
           node test/codex-quota-browser.mjs
           node test/display-settings-browser.mjs
-          node test/display-settings-browser.mjs --text-only-only
           node test/quota-placement-browser.mjs
           node test/balance-gateway-browser.mjs
           node test/sidebar-guide-browser.mjs
-          node test/balance-notice.mjs
-          git fetch --depth=1 origin aa41d946c475b9e37ee11362e0e130df816d52b0
-          git show aa41d946c475b9e37ee11362e0e130df816d52b0:lib/client.js > .tmp-balance-notice-before.js
-          node test/balance-notice-browser.mjs --baseline
-          node test/balance-notice-browser.mjs
           node test/peak-alert-browser.mjs
           node test/peak-progress-browser.mjs
           node test/update-notice-skin-browser.mjs

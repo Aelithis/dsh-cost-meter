@@ -51,7 +51,12 @@ export async function checkSidebarTextOnly(page, output, { reload = false } = {}
     }
     if (sidebarStyle === 'compact') await host.screenshot({ path: join(output, 'sidebar-text-only-' + theme + '.png') })
   }
-  await page.evaluate(() => window.configure({ locale: 'en' }))
+  // Use the real draft/autosave control: out-of-band fixture config updates must
+  // not replace a settings draft (the sidebar and the editor have separate lifecycles).
+  const general = page.locator('.cm-display-general')
+  if (!await general.evaluate(node => node.open)) await general.locator('summary').click()
+  await general.getByLabel('界面语言', { exact: true }).selectOption('en')
+  await page.waitForFunction(() => window.current().locale === 'en')
   const english = page.getByRole('switch', { name: 'Hide progress bars, show compact text', exact: true })
   assert.equal(await english.isChecked(), true)
   await english.uncheck()
@@ -60,7 +65,9 @@ export async function checkSidebarTextOnly(page, output, { reload = false } = {}
   await english.check()
   await page.waitForFunction(() => window.current().sidebarTextOnly === true)
   assert.match(await plan.innerText(), /CommandCode[\s\S]*5h[\s\S]*4%[\s\S]*Wk[\s\S]*8%[\s\S]*Mo[\s\S]*4%/)
-  await page.evaluate(() => window.configure({ locale: 'zh' }))
+  await general.getByLabel('Language', { exact: true }).selectOption('zh')
+  await page.waitForFunction(() => window.current().locale === 'zh')
+  await general.locator('summary').click()
   // Actual collapsed SidebarFooter, not CSS-resizing a wide card: retain phase and quota labels.
   await page.evaluate(() => {
     const rail = document.createElement('aside'); rail.id = 'text-only-rail'; rail.style.cssText = 'width:48px;position:relative'
