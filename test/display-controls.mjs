@@ -25,12 +25,18 @@ const set = patch => {
 }
 const inspect = selected => Inspector({ props: {
   ...quotaPlacementHelpers,
-  t: key => key, numInput: () => null, displayOptions: () => ['sidebar','settings','both','off'].map(value => el('option', { value }, value)),
+  t: key => key, numInput: (props, change) => el('input', { ...props, onChange: change }), displayOptions: () => ['sidebar','settings','both','off'].map(value => el('option', { value }, value)),
   planOptions: [['minimax','MiniMax'],['kimi','Kimi']], state: {},
 }, config, selected, selectedPlan, selectPlan: value => { selectedPlan = value }, openQuota: () => { navigated = selectedPlan },
   set, select() {}, labels: {}, registry: { plan: { on: true, patch: { codingPlans: { ...config.codingPlans, [selectedPlan]: { ...config.codingPlans[selectedPlan], display: 'settings' } } } } },
   text: (_, en) => en, region: 'sidebar', examples: true })
 const control = (tree, label) => nodes(tree).find(node => node.props['aria-label'] === label)
+config.balance.showProgressBar = true
+const balanceControls = nodes(inspect('balance')).find(node => node.props['data-inspector'] === 'balance').children
+const capIndex = balanceControls.findIndex(node => nodes(node).some(child => child.props['aria-label'] === 'balanceBudgetCapLabel'))
+assert.ok(capIndex >= 0)
+assert.ok(nodes(balanceControls[capIndex + 1]).some(node => node.props['aria-label'] === 'refreshIntervalLabel'), 'balance numeric fields share a compact grid row, without a full-width direction field between them')
+config.balance.showProgressBar = false
 const textOnly = 'Hide progress bars, show compact text'
 control(inspect('plan'), textOnly).props.onChange({ target: { checked: true } })
 assert.equal(config.sidebarTextOnly, true)
