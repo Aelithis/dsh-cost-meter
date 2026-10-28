@@ -2360,28 +2360,9 @@
         )
         return dispose
       })
+      // Display introductions share one optional entry. Billing/safety notices below stay independent.
       slots.inject('sidebar.footer.action', () => slots.register(
-        { name: 'sidebar.footer.action', id: 'cost-meter-simple-guide', order: 1, inject: injected }, SidebarSimpleGuide))
-      slots.inject('sidebar.footer.action', () => slots.register(
-        { name: 'sidebar.footer.action', id: 'cost-meter-peak-progress-guide', order: 1, inject: injected }, PeakProgressGuide))
-      slots.inject('sidebar.footer.action', () => slots.register(
-        { name: 'sidebar.footer.action', id: 'cost-meter-summary-guide', order: 1, inject: injected }, SidebarSummaryGuide))
-      // 首次更新引导:常驻 sidebar.footer.action 挂载,组件内部按 promptSeen 门控。
-      slots.inject('sidebar.footer.action', () => {
-        const dispose = slots.register(
-          { name: 'sidebar.footer.action', id: 'cost-meter-qstrip-guide', order: 1, inject: injected },
-          QuotaStripGuide,
-        )
-        return dispose
-      })
-      // 更新后的提醒(issue #37):余额/额度图框点击刷新,常驻插槽 + clickHintSeen 门控。
-      slots.inject('sidebar.footer.action', () => {
-        const dispose = slots.register(
-          { name: 'sidebar.footer.action', id: 'cost-meter-balance-click-guide', order: 2, inject: injected },
-          BalanceClickGuide,
-        )
-        return dispose
-      })
+        { name: 'sidebar.footer.action', id: 'cost-meter-display-onboarding', order: 1, inject: injected }, DisplayOnboarding))
       // Codex 订阅兼容一次性提示(契约 E):常驻 sidebar.footer.action,组件内部按
       // state.codexCompat.promptDue 门控;旧宿主无该键,组件始终渲染空,也不加载 chunk。
       slots.inject('sidebar.footer.action', () => slots.register(

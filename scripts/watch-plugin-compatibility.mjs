@@ -37,7 +37,7 @@ export function inspectPlugin(name, pkg, read) {
     }
   } else {
     const source = inspect(pkg.main ?? entry(pkg.exports?.['.']), name === 'dsh-codex-subscription'
-      ? ['registerSubscriptionTransport', 'createSubscriptionRpcHandler', 'parseCodexUsage']
+      ? ['registerSubscriptionTransport', 'createSubscriptionRpcHandler', 'parseCodexUsage', 'createCodexUsageReader']
       : ['registerOpenAICodexAuthRoutes', 'parseOpenAICodexUsage'])
     required(source, ['rateLimits', 'remainingPercent', 'windowSeconds'])
     if (name === 'dsh-codex-subscription') required(source, ['codex-subscription/', '/api/', '"usage"'])

@@ -24,7 +24,7 @@ const output = resolve('.tmp-display-review'); mkdirSync(output, { recursive: tr
 let saved = sanitizeConfig({ locale: 'zh', exchangeRate: 1, currency: 'CNY', symbol: '¥', sidebarSimple: false, budget: { enabled: true, amount: 100 },
   sidebarModels: { enabled: true }, goQuota: { enabled: false }, quotaStrip: { enabled: true, budget: true, go: false, plans: true }, peakEnabled: true, peakNotice: true, position: 'off' })
 const client = readdirSync('src/client').filter(n => n.endsWith('.js')).sort().map(n => readFileSync('src/client/' + n, 'utf8')).join('')
-  .replace('exports.apply = apply', 'exports.preview = { CostSection, parseConfig, SidebarFooter, SidebarSummaryGuide, renderSidebarFooter }; exports.apply = apply')
+  .replace('exports.apply = apply', 'exports.preview = { CostSection, parseConfig, SidebarFooter, renderSidebarFooter }; exports.apply = apply')
 const day = { ...zeroDay(), cost: 1.28, apiCost: 1.28 }
 const state = { config: saved, today: day, month: day, total: day, history: [], balance: { status: 'error', message: 'Synthetic balance error' }, codingPlans: {}, budgetUsed: 32 }
 const code = `
@@ -51,7 +51,6 @@ const api={refreshCodingPlan:async id=>{window.planRefreshes=(window.planRefresh
 window.configure=patch=>api.updateConfig(patch);
 window.orderUI.mount({effect:()=>{}},{getSnapshot:()=>({state}),subscribe:fn=>{window.listeners.add(fn);return()=>window.listeners.delete(fn)}},config=>config?.locale??'zh',{updateConfig:patch=>api.updateConfig(patch)});
 function useCost(){const[value,setValue]=React.useState(state);React.useEffect(()=>{window.listeners.add(setValue);return()=>window.listeners.delete(setValue)},[]);return{state:value,status:'ready'}}
-let guideRoot;window.showSummaryGuide=()=>{const host=document.createElement('div');document.body.append(host);guideRoot=createRoot(host);guideRoot.render(h(window.mainUI.preview.SidebarSummaryGuide,{useCost,api}))};window.disposeSummaryGuide=()=>guideRoot?.unmount();
 function FixturePreview(){return window.mainUI.preview.renderSidebarFooter(useCost().state,true,undefined,true)}
 window.attachFixtureSidebar=(container,preview=false)=>createRoot(container).render(preview?h(FixturePreview):h(SidebarFooter,{useCost,api,wide:true}));
 window.attachFixtureRail=container=>{const root=createRoot(container);root.render(h(SidebarFooter,{useCost,api,wide:false}));return()=>root.unmount()};
@@ -64,6 +63,7 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewp
 html[data-theme=dark]{color-scheme:dark;--dsw-alias-label-primary-inverted:#202022;--dsw-alias-border-l2:#38383c;--dsw-specific-sidebar-fill:#252527;--dsw-specific-input-major:#303033;--dsw-alias-button-elevated-fill:#303033;--dsw-specific-selector:#353538;--dsw-alias-label-primary:#ececee;--dsw-alias-label-secondary:#a6a6ad;--dsw-alias-label-tertiary:#92929c;--dsw-alias-border-l1:#38383c;--dsw-alias-border-l3:#38383c;--dsw-alias-bg-base:#202022;--dsw-alias-bg-layer-1:#29292c;--dsw-alias-bg-layer-2:#29292c;--dsw-alias-bg-layer-3:#36363c;--dsw-alias-state-business-primary:#6a83ff;--dsw-alias-interactive-bg-hover:#38383c}
 body{margin:0;padding:24px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:13px/1.6 system-ui}#root{max-width:960px;margin:auto}button{font:inherit}@media(max-width:480px){body{padding:12px}}
 </style></head><body><div id="root"></div><script src="/app.js"></script></body></html>`
+if (process.argv.includes('--compile-only')) { console.log('[ok] display settings fixture bundled'); process.exit(0) }
 const server = createServer((request, response) => {
   if (request.url === '/app.js') { response.setHeader('content-type', 'text/javascript'); response.end(compiled.outputFiles[0].contents) }
   else if (request.url === '/') { response.setHeader('content-type', 'text/html; charset=utf-8'); response.end(html.replace('<script src="/app.js">', '<script>window.__savedConfig=' + literal(saved) + '</script><script src="/app.js">')) }

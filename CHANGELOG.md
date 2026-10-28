@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [1.9.43] - 2026-10-28
+
+- 移除 billion-context 识别中的宿主全量清单扫描，改用运行中原生实例、异步目标读取与模块身份缓存；覆盖停用、失败、卸载、重载和磁盘升级尚未生效的情况，保留计费补记与去重。感谢 [@ZiYuan258](https://github.com/ZiYuan258) 在 [#432](https://github.com/Han-1413141/dsh-cost-meter/issues/432) 提供复现、I/O 测量、根因定位和目标读取建议。
+- 五个首次显示介绍合并为一个可关闭提示，统一指向「设置 → 费用 → 显示」；保留已有已读记录和用户设置，不关闭必要警告或第三方集成授权。感谢 [@L33Z22L11](https://github.com/L33Z22L11) 在 [#429](https://github.com/Han-1413141/dsh-cost-meter/issues/429) 报告叠加问题并提出统一入口建议。
+- 补测真实 dsh-codex-subscription 3.1.8、3.1.9、3.2.0 发布包的额度、RPC 和生命周期，更新兼容基线并增加用量读取函数指纹；响应 `github-actions[bot]` 的 [#430](https://github.com/Han-1413141/dsh-cost-meter/issues/430) 告警。
+- Remove idle full-plugin scans, consolidate display onboarding without changing preferences, and validate published Codex subscription packages through 3.2.0 before updating the compatibility baseline.
+
+[更新说明 / Release notes](docs/update-notes-1.9.43.md)
+
 ## [1.9.42] - 2026-10-28
 
 - 修复“余额图框点击刷新”提醒的按钮被侧栏裁剪、拖动区域或浮动插件拦截的问题，改用现有顶层浮卡；已读标记不再因保存失败重新弹出，兼容重复挂载、旧版宿主及本地存储不可用的页面内重挂。

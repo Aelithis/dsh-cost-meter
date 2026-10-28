@@ -6,6 +6,7 @@ const fixture = `
 function registerSubscriptionTransport(){return '/api/codex-subscription/usage'}
 function createSubscriptionRpcHandler(endpoint){if(endpoint === "usage")return {rateLimits:[]}}
 function parseCodexUsage(){return {rateLimits:[{remainingPercent:80,windowSeconds:18000}]}}
+function createCodexUsageReader(){return {read:()=>({force:false})}}
 `
 const pkg = { name: 'dsh-codex-subscription', version: '3.0.1', main: './lib/index.js' }
 const inspect = source => inspectPlugin(pkg.name, pkg, path => { assert.equal(path, 'package/lib/index.js'); return source })
@@ -17,6 +18,12 @@ assert.equal(unchanged.versionChanged, false); assert.equal(unchanged.interfaceC
 const changed = comparePlugin(inspect(fixture.replace('remainingPercent:80', 'remainingPercent:90')), baseline)
 assert.deepEqual(changed.changedFunctions, ['parseCodexUsage'])
 assert.equal(changed.interfaceChanged, true)
+const readerChanged = comparePlugin(inspect(fixture.replace('force:false', 'force:true')), baseline)
+assert.deepEqual(readerChanged.changedFunctions, ['createCodexUsageReader'], 'reader lifecycle drift is detected even when parser/RPC signatures stay unchanged')
+assert.equal(readerChanged.interfaceChanged, true)
+assert.deepEqual(readerChanged.problems, [], 'static fields can still match despite changed reader behavior')
+assert.ok(inspect(fixture.replace('function createCodexUsageReader', 'function removedReader')).problems.some(item => item.includes('createCodexUsageReader')))
+
 const broken = comparePlugin(inspect(fixture.replaceAll('remainingPercent', 'remainingQuota')), baseline)
 assert.match(broken.problems.join(' '), /remainingPercent/)
 assert.ok(inspect(fixture.replace('function registerSubscriptionTransport', 'function newTransport')).problems.some(item => item.includes('registerSubscriptionTransport')))
