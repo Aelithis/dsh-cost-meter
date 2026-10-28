@@ -65,12 +65,18 @@ const server = createServer((request, response) => {
     </style><div id="caption">DSH desktop titlebar</div><div id="plugin-cover"></div><button id="page-action" onclick="window.pageClicks=(window.pageClicks||0)+1">页面操作</button><div id="root"></div><script>const params=new URL(location).searchParams;document.documentElement.dataset.env=params.get('env')||'windows';document.documentElement.dataset.skin=params.get('skin')||'dark';if(params.has('legacyKey'))localStorage.setItem(params.get('legacyKey'),'1');window.fixtureHidden=params.has('hidden');if(window.fixtureHidden)Object.defineProperty(document,'hidden',{configurable:true,get:()=>window.fixtureHidden});window.openBlocker=kind=>{const blocker=document.createElement(kind==='modal'?'dialog':'section');blocker.id='host-blocker';blocker.setAttribute('role','dialog');blocker.setAttribute('aria-label','Existing settings');const close=document.createElement('button');close.textContent='Close existing settings';close.onclick=()=>{blocker.close?.();blocker.remove()};blocker.append(close);document.body.append(blocker);if(kind==='modal')blocker.showModal()};if(params.has('blocked'))window.openBlocker(params.get('blocked'))</script><script type="module" src="/app.js"></script>`)
 })
 await new Promise(done => server.listen(0, '127.0.0.1', done)); const origin = `http://127.0.0.1:${server.address().port}`
-const browser = await chromium.launch({ executablePath: process.env.CM_TEST_BROWSER ?? ['/usr/bin/chromium', '/usr/bin/google-chrome'].find(existsSync), headless: true })
-const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, hasTouch: true })
-page.setDefaultTimeout(5000)
+let browser, context, page
 const errors = [], external = [], reports = []
-page.on('pageerror', e => errors.push(e.message))
-await page.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : (external.push(route.request().url()), route.abort()))
+try {
+  browser = await chromium.launch({ executablePath: process.env.CM_TEST_BROWSER ?? ['/usr/bin/chromium', '/usr/bin/google-chrome'].find(existsSync), headless: true })
+  // browser.newPage() owns a one-page convenience context; multi-tab storage tests
+  // need an explicitly owned context with auditing installed before either page opens.
+  context = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true })
+  context.on('page', opened => opened.on('pageerror', error => errors.push(error.message)))
+  await context.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : (external.push(route.request().url()), route.abort()))
+  page = await context.newPage()
+  assert.equal(page.context(), context, 'the main page belongs to the explicitly shared context')
+  page.setDefaultTimeout(5000)
 const guide = () => page.getByRole('dialog', { name: /按需设置费用显示|Set up your cost display/ })
 const settled = async () => { await page.waitForFunction(() => window.ready); await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))); await page.waitForTimeout(40) }
 const fresh = async (query = '', visible = true) => {
@@ -85,7 +91,6 @@ const intercept = async () => page.evaluate(() => {
     if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) { window.intercepts++; window.interceptedTypes.push(event.type); event.preventDefault(); event.stopPropagation() }
   }, { capture: true, passive: false })
 })
-try {
   if (suite === 'all' || suite === 'geometry') {
     for (const skin of ['dark', 'light', 'translucent']) for (const [env, width, height] of [['windows',1280,800],['windows',900,600],['darwin',1280,800],['fullscreen',900,600],['web',390,700],['web',390,320]]) {
       await page.setViewportSize({ width, height }); await fresh('env=' + env + '&skin=' + skin)
@@ -174,13 +179,41 @@ try {
     await page.evaluate(()=>{window.fixtureHidden=true;document.dispatchEvent(new Event('visibilitychange'))}); await guide().waitFor({state:'detached'}); assert.equal(await page.evaluate(()=>window.saves),0)
     await page.evaluate(()=>{window.fixtureHidden=false;document.dispatchEvent(new Event('visibilitychange'))}); await guide().waitFor(); await dismiss()
     // Another same-origin tab dismissing the entry propagates without forcing a reload.
-    await fresh(); const other=await page.context().newPage(); await other.goto(origin); await other.evaluate(()=>localStorage.setItem('dsh-cost-meter:display-onboarding-seen','1')); await guide().waitFor({state:'detached'}); await other.close()
+    await fresh()
+    await page.evaluate(() => {
+      window.onboardingStorageEvents = 0
+      window.addEventListener('storage', event => {
+        if (event.key === 'dsh-cost-meter:display-onboarding-seen' && event.newValue === '1' && event.storageArea === localStorage) window.onboardingStorageEvents++
+      })
+    })
+    const other = await context.newPage()
+    try {
+      assert.equal(other.context(), context, 'both tabs share the same storage context')
+      await other.goto(origin); await other.waitForFunction(() => window.ready)
+      await page.bringToFront(); await settled()
+      assert.equal(await page.evaluate(() => document.hidden), false)
+      assert.equal(await guide().count(), 1, 'opening another tab must not count as dismissal')
+      await other.evaluate(() => localStorage.setItem('dsh-cost-meter:display-onboarding-seen', '1'))
+      await page.waitForFunction(() => window.onboardingStorageEvents === 1)
+      await page.bringToFront(); await settled(); await guide().waitFor({ state: 'detached' })
+      assert.equal(await page.evaluate(() => localStorage.getItem('dsh-cost-meter:display-onboarding-seen')), '1')
+      assert.equal(await page.evaluate(() => window.saves), 0, 'cross-tab acknowledgement does not issue a settings RPC')
+      await page.evaluate(() => window.remount()); await settled()
+      assert.equal(await guide().count(), 0, 'foreground remount remains dismissed after the real storage event')
+    } finally { await other.close().catch(()=>{}) }
     reports.push({legacyConfigMarkers:5,legacyStorageKeys:5,oldHost:true,legacyBrowser:true,crossTab:true,existingDialogPriority:true,hiddenTabDeferral:true})
   }
   assert.deepEqual(errors,[]); assert.deepEqual(external,[])
   writeFileSync(join(output,'onboarding-'+suite+'.json'),JSON.stringify({suite,reports,errors,external},null,2))
   console.log('[ok] Unified onboarding browser '+suite+': skin-safe non-modal entry, dismissal persistence and retained preferences')
-} catch (error) { await page.screenshot({path:join(output,'onboarding-'+suite+'-failure.png')}); throw error }
-finally { await page.evaluate(()=>window.dispose?.()).catch(()=>{}); await browser.close(); server.closeAllConnections(); await new Promise(done=>server.close(done)) }
+} catch (error) {
+  if (page) await page.screenshot({path:join(output,'onboarding-'+suite+'-failure.png')}).catch(()=>{})
+  throw error
+} finally {
+  if (page) await page.evaluate(()=>window.dispose?.()).catch(()=>{})
+  if (context) await context.close().catch(()=>{})
+  if (browser) await browser.close().catch(()=>{})
+  server.closeAllConnections(); await new Promise(done=>server.close(done))
+}
 }
 if (process.argv[1]?.endsWith('/display-onboarding-browser.mjs')) await runDisplayOnboardingBrowser()
