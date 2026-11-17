@@ -15,6 +15,10 @@ import { checkTodayAndOrder } from './today-sidebar-order-checks.mjs'
 import { checkDisplayPreview } from './display-preview-checks.mjs'
 import { checkFeedbackSidebar } from './feedback-sidebar-checks.mjs'
 import { checkSidebarTextOnly } from './sidebar-text-only-checks.mjs'
+import { checkPlanGauges } from './plan-gauge-checks.mjs'
+import { checkBalanceQuickHide } from './balance-quick-hide-checks.mjs'
+import { checkLocalSavings } from './local-savings-browser-checks.mjs'
+import { checkSidebarIcons } from './sidebar-icons-browser-checks.mjs'
 
 const modules = resolve(process.env.DSH_TEST_UI_MODULES ?? '.tmp-pr240-host/node_modules')
 const req = createRequire(join(modules, '__display.cjs'))
@@ -22,20 +26,32 @@ const { chromium } = req('playwright-core')
 const executablePath = process.env.CM_TEST_BROWSER ?? ['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', '/usr/bin/google-chrome', '/usr/bin/chromium'].find(existsSync)
 const output = resolve('.tmp-display-review'); mkdirSync(output, { recursive: true })
 let saved = sanitizeConfig({ locale: 'zh', exchangeRate: 1, currency: 'CNY', symbol: '¥', sidebarSimple: false, budget: { enabled: true, amount: 100 },
-  sidebarModels: { enabled: true }, goQuota: { enabled: false }, quotaStrip: { enabled: true, budget: true, go: false, plans: true }, peakEnabled: true, peakNotice: true, position: 'off' })
+  sidebarModels: { enabled: true }, goQuota: { enabled: false }, quotaStrip: { enabled: true, budget: true, go: false, plans: true }, peakEnabled: true, peakNotice: true })
 const client = readdirSync('src/client').filter(n => n.endsWith('.js')).sort().map(n => readFileSync('src/client/' + n, 'utf8')).join('')
   .replace('exports.apply = apply', 'exports.preview = { CostSection, parseConfig, SidebarFooter, renderSidebarFooter }; exports.apply = apply')
 const day = { ...zeroDay(), cost: 1.28, apiCost: 1.28 }
 const state = { config: saved, today: day, month: day, total: day, history: [], balance: { status: 'error', message: 'Synthetic balance error' }, codingPlans: {}, budgetUsed: 32 }
+const multiBalances = [{ id: 'account-a1', label: '工作账号', status: 'ok', message: '', fetchedAt: Date.now(), currency: 'USD', totalBalance: 12, grantedBalance: 0, toppedUpBalance: 12 },
+  { id: 'account-b2', label: '个人账号', status: 'ok', message: '', fetchedAt: Date.now(), currency: 'USD', totalBalance: 12, grantedBalance: 0, toppedUpBalance: 12 }]
+if (process.argv.includes('--multi-balance-only') || process.argv.includes('--icons-only')) {
+  saved = sanitizeConfig({ ...saved, queryAccounts: { balance: { selected: 'account-a1', accounts: multiBalances.map(({ id, label }) => ({ id, label })) } } })
+  Object.assign(state, { config: saved, balance: multiBalances[0], balanceAccounts: multiBalances })
+}
 const code = `
 import * as ReactDOMPortal from ${literal(req.resolve('react-dom'))};import React from ${literal(req.resolve('react'))};import{createRoot}from ${literal(req.resolve('react-dom/client'))};
 const h=React.createElement;
 const tooltipText=value=>Array.isArray(value)?value.map(tooltipText).join(' '):typeof value==='string'||typeof value==='number'?String(value):value?.props?tooltipText(value.props.children):'';
-const mainRequire=name=>name==='react'?React:{Tooltip:({children,label})=>React.cloneElement(children,{'data-test-tooltip':tooltipText(label)})};mainRequire.async=async()=>window.peakUI;
+const mainRequire=name=>name==='react'?React:{Tooltip:({children,label})=>React.cloneElement(children,{'data-test-tooltip':tooltipText(label)})};mainRequire.async=async path=>{const chunk={'./client.plan-settings.js':window.planSettingsUI,'./client.local-savings.js':window.localSavingsUI,'./client.peak.js':window.peakUI,'./client.sidebar-icons.js':window.sidebarIconsUI}[path];if(!chunk)throw Error('Unexpected test chunk: '+path);return chunk};
 window.__ModuleLoader__={load:mod=>window.mainUI=mod.factory(mainRequire)};
 ${client}
+window.__ModuleLoader__={load:mod=>window.planSettingsUI=mod.factory(()=>React)};
+${readFileSync('lib/client.plan-settings.js', 'utf8')}
 window.__ModuleLoader__={load:mod=>window.peakUI=mod.factory(name=>name==='react-dom'?ReactDOMPortal:React)};
 ${readFileSync('lib/client.peak.js', 'utf8')}
+window.__ModuleLoader__={load:mod=>window.sidebarIconsUI=mod.factory(name=>name==='react'?React:{})};
+${readFileSync('lib/client.sidebar-icons.js', 'utf8')}
+window.__ModuleLoader__={load:mod=>window.localSavingsUI=mod.factory(()=>React)};
+${readFileSync('lib/client.local-savings.js', 'utf8')}
 window.__ModuleLoader__={load:mod=>window.displayUI=mod.factory(()=>React)};
 ${readFileSync('lib/client.display.js', 'utf8')}
 window.__ModuleLoader__={load:mod=>window.orderUI=mod.factory(()=>React)};
@@ -49,8 +65,9 @@ window.changeLocale=locale=>window.setConfig({locale});window.setFixtureState=pa
 const api={refreshCodingPlan:async id=>{window.planRefreshes=(window.planRefreshes??0)+1;await new Promise(done=>setTimeout(done,50))},refreshBalance:async()=>{window.balanceRefreshes=(window.balanceRefreshes??0)+1;await new Promise(done=>setTimeout(done,50))},loadDisplay:async()=>Display,loadCommunity:async()=>()=>null,loadPricing:async()=>()=>null,loadStatistics:async()=>()=>null,updateConfig:async patch=>{
   if(window.failSave)throw Error('synthetic save failure');const config=await window.saveConfig(patch);window.patches.push(patch);state={...state,config:parseConfig(config,'config')};return publish()}};
 window.configure=patch=>api.updateConfig(patch);
+api.refreshCustomBalance=async()=>{window.customBalanceRefreshes=(window.customBalanceRefreshes??0)+1};
 window.orderUI.mount({effect:()=>{}},{getSnapshot:()=>({state}),subscribe:fn=>{window.listeners.add(fn);return()=>window.listeners.delete(fn)}},config=>config?.locale??'zh',{updateConfig:patch=>api.updateConfig(patch)});
-function useCost(){const[value,setValue]=React.useState(state);React.useEffect(()=>{window.listeners.add(setValue);return()=>window.listeners.delete(setValue)},[]);return{state:value,status:'ready'}}
+function useCost(){const[value,setValue]=React.useState(state);React.useEffect(()=>{window.listeners.add(setValue);setValue(state);return()=>window.listeners.delete(setValue)},[]);return{state:value,status:'ready'}}
 function FixturePreview(){return window.mainUI.preview.renderSidebarFooter(useCost().state,true,undefined,true)}
 window.attachFixtureSidebar=(container,preview=false)=>createRoot(container).render(preview?h(FixturePreview):h(SidebarFooter,{useCost,api,wide:true}));
 window.attachFixtureRail=container=>{const root=createRoot(container);root.render(h(SidebarFooter,{useCost,api,wide:false}));return()=>root.unmount()};
@@ -91,7 +108,78 @@ await page.exposeFunction('saveConfig', patch => {
 })
 try {
   await page.goto(url)
-  if (process.argv.includes('--feedback-only')) {
+  if (process.argv.includes('--icons-only')) {
+    await checkSidebarIcons(page, output)
+    assert.deepEqual(errors, []); assert.deepEqual(external, [])
+  } else if (process.argv.includes('--multi-balance-only')) {
+    const rows = multiBalances
+    const list = page.locator('[data-balance-accounts]'), sidebar = page.locator('#actual-sidebar')
+    await list.getByText('工作账号', { exact: true }).waitFor()
+    assert.equal(await list.getByText('$12', { exact: true }).count(), 2)
+    assert.equal(await sidebar.locator('[data-cm-display="balance"]').count(), 2, 'equal balances still have two account rows')
+    await list.getByRole('button', { name: '切换', exact: true }).click()
+    await page.waitForFunction(() => window.current().queryAccounts.balance.selected === 'account-b2')
+    await sidebar.evaluate(n => { n.style.position = 'static'; n.style.left = 'auto' })
+    await page.screenshot({ path: join(output, 'multiple-balances.png'), fullPage: true })
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.screenshot({ path: join(output, 'multiple-balances-narrow.png'), fullPage: true })
+    for (const accounts of [[rows[0]], []]) {
+      await page.evaluate(accounts => window.setFixtureState({ balanceAccounts: accounts }), accounts)
+      assert.equal(await sidebar.locator('[data-cm-display="balance"]').count(), 1, 'one account or old snapshots keep the original row')
+      assert.ok(!(await sidebar.locator('[data-cm-display="balance"]').innerText()).includes('工作账号'))
+    }
+    assert.deepEqual(errors, []); assert.deepEqual(external, [])
+    console.log('[ok] multiple balances: list, selection, sidebar, equal amounts, single-account and legacy layout')
+  } else if (process.argv.includes('--balance-source-only')) {
+    const source = page.getByLabel('余额来源', { exact: true })
+    assert.equal(await source.inputValue(), 'auto')
+    await source.selectOption('account')
+    await page.waitForFunction(() => window.current().balance.source === 'account' && window.patches.some(p => p.balance?.source === 'account'))
+    await page.reload()
+    assert.equal(await source.inputValue(), 'account', 'wallet preference survives reopening')
+    await page.screenshot({ path: join(output, 'balance-source.png'), fullPage: true })
+    await source.selectOption('auto')
+    await page.waitForFunction(() => window.current().balance.source === 'auto')
+    assert.deepEqual(errors, []); assert.deepEqual(external, [])
+    console.log('[ok] balance source: selection, autosave, reopening and restoring auto')
+  } else if (process.argv.includes('--plan-amounts-only')) {
+    const open = async () => {
+      await page.getByRole('tab', { name: '显示', exact: true }).click()
+      await page.getByRole('tab', { name: '输入区', exact: true }).click()
+      await page.getByLabel('调整组件', { exact: true }).selectOption('strip-plans')
+    }
+    await open()
+    const toggle = page.getByRole('switch', { name: '显示套餐余额', exact: true })
+    assert.equal(await toggle.isChecked(), true)
+    assert.match(await page.locator('.cm-preview-strip').innerText(), /\$1\.0000/)
+    await page.locator('.cm-display').screenshot({ path: join(output, 'plan-amounts-on.png') })
+    await toggle.click()
+    await page.waitForFunction(() => window.current().quotaStrip.planAmounts === false)
+    assert.doesNotMatch(await page.locator('.cm-preview-strip').innerText(), /\$1\.0000/)
+    assert.ok(await page.locator('.cm-preview-strip .cm-qbar').count())
+    await page.locator('.cm-display').screenshot({ path: join(output, 'plan-amounts-off.png') })
+    await page.waitForFunction(() => window.patches.some(patch => patch.quotaStrip?.planAmounts === false))
+    await page.reload(); await open()
+    assert.equal(await toggle.isChecked(), false, 'amount setting persists across reopening')
+    await toggle.click()
+    await page.waitForFunction(() => window.current().quotaStrip.planAmounts === true)
+    assert.match(await page.locator('.cm-preview-strip').innerText(), /\$1\.0000/)
+    assert.deepEqual(errors, []); assert.deepEqual(external, [])
+    console.log('[ok] composer plan amount toggle: live preview, autosave and reopening')
+  } else if (process.argv.includes('--summary-only')) {
+    console.log('[ok] summary sidebar ' + JSON.stringify(await checkSidebarUpdates(page, output)))
+    assert.deepEqual(errors, []); assert.deepEqual(external, [])
+  } else if (process.argv.includes('--local-savings-only')) {
+    console.log('[ok] local savings ' + JSON.stringify(await checkLocalSavings(page, output)))
+    assert.deepEqual(errors, []); assert.deepEqual(external, [])
+  } else if (process.argv.includes('--gauge-only')) {
+    console.log('[ok] plan gauges ' + JSON.stringify(await checkPlanGauges(page, output)))
+    assert.deepEqual(errors, []); assert.deepEqual(external, [])
+  } else if (process.argv.includes('--quick-hide-only')) {
+    const result = await checkBalanceQuickHide(page, output)
+    assert.deepEqual(errors, []); assert.deepEqual(external, [])
+    console.log('[ok] balance quick hide ' + JSON.stringify(result))
+  } else if (process.argv.includes('--feedback-only')) {
     const result = await checkFeedbackSidebar(page, output)
     assert.deepEqual(errors, []); assert.deepEqual(external, [])
     console.log('[ok] feedback ' + JSON.stringify(result))
@@ -117,6 +205,8 @@ try {
     window.MutationObserver=class extends Observe{active=false;observe(...args){if(args[1]?.attributeFilter?.includes('data-theme')&&!this.active){window.previewObservers++;this.active=true}return super.observe(...args)}disconnect(){if(this.active){window.previewObservers--;this.active=false}return super.disconnect()}}
   })
   await page.getByRole('tab',{name:'显示',exact:true}).click();await page.locator('.cm-display').waitFor()
+  assert.equal(await page.getByText('会话费用显示位置',{exact:true}).count(),0,'position controls appear only for session-cost components')
+  assert.equal(await page.evaluate(()=>window.current().position),'dock','saved cost position remains supported')
   const previewTop = await page.locator('.cm-display').evaluate(n => n.querySelector('.cm-region-preview').getBoundingClientRect().top - n.getBoundingClientRect().top)
   assert.ok(previewTop < 115, 'preview is directly below the compact heading and toolbar: ' + previewTop)
   await page.locator('.cm-display-general summary').click()
@@ -129,9 +219,11 @@ try {
   await page.locator('.cm-display-general summary').click()
   await page.evaluate(() => window.scrollTo(0, 0))
   await page.screenshot({ path: join(output, 'display-compact-header.png') })
+  await checkPlanGauges(page, output)
   await checkInlineBalance(page, output)
   await checkSidebarTextOnly(page, output)
   await checkTodayAndOrder(page, output)
+  await checkLocalSavings(page, output)
   const region=async name=>page.getByRole('tab',{name,exact:true}).click()
   const item=key=>page.locator('.cm-preview [data-display="'+key+'"]')
   const selectStyle=async label=>{if(['标准','紧凑','简洁'].includes(label)&&await page.locator('.cm-style-thumbnail').count()===0)await page.locator('.cm-inspector-layout').click();await page.getByRole('button',{name:label,exact:true}).click()}
@@ -154,8 +246,14 @@ try {
   assert.equal(await page.locator('.cm-display-toggles').count(),0,'visibility controls are only in the right inspector')
   assert.equal(await page.locator('.cm-inspector-layout').getAttribute('aria-expanded'), 'true', 'sidebar layouts start expanded and remain open when selecting components')
   const previews=page.locator('.cm-style-thumbnail')
-  assert.equal(await previews.count(),4)
-  for(const preview of await previews.all()) assert.equal(await preview.locator('.cm-mm-row .cm-bbox-bar').count(),2,'each style preview uses real quota progress rows')
+  assert.equal(await previews.count(),5)
+  await page.locator('.cm-style-thumbnail .cm-icons-row').waitFor()
+  for(const preview of await previews.all()) {
+    if(await preview.locator('.cm-icons-row').count()) {
+      assert.ok(await preview.locator('.cm-icons-button').count()>0,'Icons preview uses the real icon presentation')
+      assert.equal(await preview.locator('.cm-mm-row .cm-bbox-bar').count(),0,'Icons keeps native details collapsed')
+    } else assert.equal(await preview.locator('.cm-mm-row .cm-bbox-bar').count(),2,'each existing style preview retains its real quota progress rows')
+  }
   const progressRows=await page.evaluate(()=>['standard','compact'].map(mode=>[...document.querySelectorAll('.cm-style-thumbnail .cm-footer-stack'+(mode==='compact'?'.compact':':not(.simple):not(.compact)')+' .cm-mm-row')].map(n=>n.getBoundingClientRect().y)))
   assert.ok(progressRows[0][1]>progressRows[0][0],'standard rows stack vertically')
   assert.ok(Math.abs(progressRows[1][1]-progressRows[1][0])<1,'compact rows sit side by side')
@@ -167,6 +265,11 @@ try {
   const patchesBeforeSource=await page.evaluate(()=>window.patches.length)
   await examples.uncheck()
   assert.equal(await page.locator('.cm-sidebar-live .cm-bal-err').count(),1,'current data retains its actual error state')
+  await region('输入区')
+  const emptyDock = page.locator('[data-display=dock-cost] .cm-dl')
+  assert.doesNotMatch(await emptyDock.innerText(), /60\.0%|128K/, 'examples off: composer cost preview does not invent token numbers')
+  assert.match(await emptyDock.innerText(), /暂无会话缓存/, 'examples off: composer cost preview shows the empty placeholder')
+  await region('侧栏')
   await examples.check();await examples.uncheck()
   assert.equal(await page.evaluate(()=>JSON.stringify(window.current())),configBeforeSource)
   assert.equal(await page.evaluate(()=>window.patches.length),patchesBeforeSource,'source switch never saves example configuration')
@@ -240,12 +343,27 @@ try {
   await toggle('peak');await page.waitForFunction(()=>window.current().peakNotice===false);assert.equal(saved.peakEnabled,true)
   await region('输入区');await toggle('strip-go');await page.waitForFunction(()=>window.current().quotaStrip.go===true);assert.equal(saved.goQuota.enabled,false)
   await page.waitForFunction(()=>document.querySelector('.cm-native-input-card').style.borderRadius==='31px')
-  await toggle('session-dock');await toggle('badge');await page.waitForFunction(()=>window.current().hideSessionCostDock&&window.current().position==='dock')
+  await page.getByLabel('调整组件',{exact:true}).selectOption('dock-cost')
+  const subagentSwitch = page.getByRole('switch', { name: '本会话费用包含子代理', exact: true })
+  await subagentSwitch.check(); await page.waitForFunction(() => window.current().includeSubagentCost === true)
+  await subagentSwitch.uncheck(); await page.waitForFunction(() => window.current().includeSubagentCost === false)
+  const dockSwitch = page.locator('[data-display-toggle=dock-cost]')
+  await dockSwitch.check();await page.waitForFunction(()=>window.current().position==='dock'&&!window.current().hideSessionCostDock)
+  await dockSwitch.uncheck();await page.waitForFunction(()=>window.current().position==='off'&&window.current().hideSessionCostDock)
+  await dockSwitch.check();await page.waitForFunction(()=>window.current().position==='dock'&&!window.current().hideSessionCostDock)
+  await page.getByLabel('会话费用显示位置',{exact:true}).selectOption('header')
+  await page.waitForFunction(()=>window.current().position==='header')
+  await page.getByRole('tab',{name:'概览',exact:true}).click()
+  await page.getByRole('tab',{name:'显示',exact:true}).click()
+  await region('会话内容');await page.getByLabel('调整组件',{exact:true}).selectOption('badge')
+  assert.equal(await page.locator('[data-display-toggle=badge]').isChecked(),true,'the saved header position survives leaving settings')
+  await page.getByLabel('会话费用显示位置',{exact:true}).selectOption('dock')
+  await page.waitForFunction(()=>window.current().position==='dock')
   await region('会话内容');await toggle('turn');await toggle('session-header');await page.waitForFunction(()=>window.current().hideTurnCost&&window.current().hideSessionCostHeader)
   assert.equal(await page.locator('.cm-native-turn').innerText(),'▸ 本轮费用 ≈ —','no invented session value when examples are off')
   assert.equal(await page.getByLabel('调整组件',{exact:true}).locator('option[value=""]').count(),0,'instruction is not an option after selection')
   assert.equal(await page.getByText('点击左侧虚线框',{exact:true}).count(),0)
-  await region('输入区');await customize('badge')
+  await region('输入区');await customize('dock-cost')
   assert.equal(await page.getByRole('switch',{name:'仅显示金额',exact:true}).count(),1)
   assert.equal(await page.getByText('悬停查看费用分项。',{exact:true}).count(),1)
   await examples.check();await region('侧栏')

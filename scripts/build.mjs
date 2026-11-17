@@ -19,6 +19,8 @@ import { transform, build } from 'esbuild'
 import { runInNewContext } from 'node:vm'
 import assert from 'node:assert/strict'
 import { javascriptLiteral } from './javascript-literal.mjs'
+import { withClientRegistration } from './client-registration.mjs'
+import { SUBSCRIPTION_CATALOG } from '../lib/subscription-catalog.js'
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -72,11 +74,12 @@ const dictionaryStrings = [...messageKeys, ...Object.values(messages).flatMap(Ob
 const separator = ['|', '~', '^', '`'].find(char => dictionaryStrings.every(value => !value.includes(char)))
 assert.ok(separator && dictionaryStrings.every(value => !value.includes('\0')), 'dictionary needs an unused separator')
 const packedMessages = Object.entries(messages).map(([locale, dict]) => [locale, messageKeys.map(key => dict[key] ?? '\0').join(separator)])
+let packedMessageKeys = messageKeys.join(separator)
 // Repeated phrases consume much of the remaining runtime byte budget.
 // Replace only profitable phrases with unused private-use characters, then
 // restore them before exposing dictionaries. All translations round-trip below.
 const phraseCounts = new Map()
-for (const value of Object.values(messages).flatMap(Object.values)) {
+for (const value of dictionaryStrings) {
   for (const match of value.matchAll(/[A-Za-z][A-Za-z0-9'-]{2,}/g)) {
     phraseCounts.set(match[0], (phraseCounts.get(match[0]) ?? 0) + 1)
   }
@@ -95,6 +98,12 @@ for (const value of Object.values(messages).flatMap(Object.values)) {
     }
   }
 }
+// Camel-case keys share words too; restore their exact spelling before dictionary lookup.
+for (const key of messageKeys) {
+  for (const [word] of key.matchAll(/[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)/g)) {
+    if (word.length >= 3) phraseCounts.set(word, (phraseCounts.get(word) ?? 0) + 1)
+  }
+}
 const phrases = []
 // Token 用 UTF-8 只占 2 字节的区间(拉丁扩展-B),而不是 3 字节的 U+E000 私用区:
 // 每次替换省 1 字节,短短语也因此变得划算。产物贴着 DSH STORE 单文件上限时,
@@ -108,22 +117,24 @@ const phraseBytes = phrase => Buffer.byteLength(phrase)
 const candidates = [...phraseCounts].filter(([, count]) => count >= 2)
   .sort((a, b) => (phraseBytes(b[0]) - TOKEN_BYTES) * b[1] - (phraseBytes(a[0]) - TOKEN_BYTES) * a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
 for (const [phrase] of candidates) {
-  const count = packedMessages.reduce((sum, [, packed]) => sum + packed.split(phrase).length - 1, 0)
+  const count = packedMessages.reduce((sum, [, packed]) => sum + packed.split(phrase).length - 1, packedMessageKeys.split(phrase).length - 1)
   // 短语表里一条的成本是 len + 1(分隔符),每次出现省 (len - TOKEN_BYTES);只收净赚的。
   if (count * (phraseBytes(phrase) - TOKEN_BYTES) <= phraseBytes(phrase) + 1) continue
   const token = String.fromCharCode(tokenBase + phrases.length)
   phrases.push(phrase)
   for (const row of packedMessages) row[1] = row[1].split(phrase).join(token)
+  packedMessageKeys = packedMessageKeys.split(phrase).join(token)
   // U+0180..U+07FF 都是 UTF-8 双字节，实际使用前验证它们未出现在字典中。
   if (phrases.length === tokenLast - tokenBase + 1) break
 }
 const restorePhrases = packed => packed.replace(new RegExp(tokenRange, 'g'), token => phrases[token.charCodeAt(0) - tokenBase])
+assert.deepEqual(restorePhrases(packedMessageKeys).split(separator), messageKeys, 'dictionary packing must preserve every key')
 const unpacked = Object.fromEntries(packedMessages.map(([locale, packed]) => {
   const values = restorePhrases(packed).split(separator)
   return [locale, Object.fromEntries(messageKeys.map((key, i) => [key, values[i]]).filter(([, value]) => value !== '\0'))]
 }))
 assert.deepEqual(unpacked, JSON.parse(JSON.stringify(messages)), 'dictionary packing must preserve every translation')
-src = src.replace(messagesMatch[0], () => `const messageKeys=${javascriptLiteral(messageKeys.join(separator))}.split(${javascriptLiteral(separator)});const messagePhrases=${javascriptLiteral(phrases.join(separator))}.split(${javascriptLiteral(separator)});const MESSAGES=Object.fromEntries(${javascriptLiteral(packedMessages)}.map(([locale,packed])=>{const values=packed.replace(/${tokenRange}/g,token=>messagePhrases[token.charCodeAt(0)-${tokenBase}]).split(${javascriptLiteral(separator)});return [locale,Object.fromEntries(messageKeys.map((key,i)=>[key,values[i]]).filter(([,value])=>value!=="\\0"))]}));\n`)
+src = src.replace(messagesMatch[0], () => `const messagePhrases=${javascriptLiteral(phrases.join(separator))}.split(${javascriptLiteral(separator)});const restoreMessagePhrases=packed=>packed.replace(/${tokenRange}/g,token=>messagePhrases[token.charCodeAt(0)-${tokenBase}]);const messageKeys=restoreMessagePhrases(${javascriptLiteral(packedMessageKeys)}).split(${javascriptLiteral(separator)});const MESSAGES=Object.fromEntries(${javascriptLiteral(packedMessages)}.map(([locale,packed])=>{const values=restoreMessagePhrases(packed).split(${javascriptLiteral(separator)});return [locale,Object.fromEntries(messageKeys.map((key,i)=>[key,values[i]]).filter(([,value])=>value!=="\\0"))]}));\n`)
 // CSS 在源码保留逐行审阅形式；发布时先按 CSS 语法压缩，再嵌入同一客户端。
 // 不删除规则、不调整选择器优先级，所有样式仍在受字节门禁检查的 bundle 内。
 const cssMatch = src.match(/const css = (\[[\s\S]*?\]\.join\('\\n'\))/)
@@ -137,9 +148,9 @@ const compactCss = cssResult.code.trim()
 // Select repeated declarations, selectors and theme tokens by their actual UTF-8 savings.
 // Decode once at load time; the stylesheet is byte-for-byte identical to esbuild's output.
 const cssCounts = new Map()
-for (const pattern of [/[a-z-]+:[^;{}]+;?/g, /\.cm-[a-z-]+/g, /var\(--[a-z0-9-]+(?:,[^()]*)?\)/g]) {
+for (const pattern of [/[a-z-]+:[^;{}]+;?/g, /\.cm-[a-z-]+/g, /var\(--[a-z0-9-]+(?:,[^()]*)?\)/g, /[a-z-]+:/g, /\d+px (?:solid|dashed) /g]) {
   for (const [phrase] of compactCss.matchAll(pattern)) {
-    if (phrase.length > 7 && !phrase.includes('~')) cssCounts.set(phrase, (cssCounts.get(phrase) ?? 0) + 1)
+    if (phrase.length > 4 && !phrase.includes('~')) cssCounts.set(phrase, (cssCounts.get(phrase) ?? 0) + 1)
   }
 }
 for (const phrase of ['var(--dsw-alias-', '.cm-', 'background:', 'align-items:', 'border-radius:', 'font-size:', 'display:', 'padding:', 'justify-content:', 'margin:', 'gap:', 'font-weight:', 'line-height:', 'border:', 'min-width:', 'max-width:']) {
@@ -148,7 +159,10 @@ for (const phrase of ['var(--dsw-alias-', '.cm-', 'background:', 'align-items:',
 const cssCandidates = [...cssCounts].filter(([, count]) => count >= 2).sort((a, b) =>
   (Buffer.byteLength(b[0]) - 2) * (b[1] - 1) - (Buffer.byteLength(a[0]) - 2) * (a[1] - 1) || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
 const cssPhrases = [], cssTokenBase = 0x0180
-const cssTokenRange = `[${String.fromCharCode(cssTokenBase)}-${String.fromCharCode(cssTokenBase + 127)}]`
+// Prefer unused one-byte markers for the first phrases; preserve the exact CSS on decode.
+const cssAsciiMarkers = ['`', '|', '$', '&', '?', '@'].filter(value => !compactCss.includes(value)).join('')
+const cssTokenRange = `[${cssAsciiMarkers}${String.fromCharCode(cssTokenBase)}-${String.fromCharCode(cssTokenBase + 127)}]`
+const cssTokenIndex = token => token.charCodeAt(0) >= cssTokenBase ? token.charCodeAt(0) - cssTokenBase : cssAsciiMarkers.indexOf(token)
 assert.ok(!new RegExp(cssTokenRange).test(compactCss), 'CSS packing markers must be unused')
 let packedCss = compactCss
 // Greedy by measured saving: each round re-counts every candidate in the already
@@ -162,12 +176,12 @@ while (cssPhrases.length < 128) {
     if (gain > bestGain) { best = phrase; bestGain = gain }
   }
   if (best === null) break
-  packedCss = packedCss.replaceAll(best, String.fromCharCode(cssTokenBase + cssPhrases.length))
+  packedCss = packedCss.replaceAll(best, () => cssAsciiMarkers[cssPhrases.length] ?? String.fromCharCode(cssTokenBase + cssPhrases.length))
   cssPhrases.push(best)
 }
-assert.equal(packedCss.replace(new RegExp(cssTokenRange, 'g'), token => cssPhrases[token.charCodeAt(0) - cssTokenBase]), compactCss)
-src = src.replace(cssMatch[0], () => `const cssPhrases=${javascriptLiteral(cssPhrases.join('~'))}.split("~");const css=${javascriptLiteral(packedCss)}.replace(/${cssTokenRange}/g,token=>cssPhrases[token.charCodeAt(0)-${cssTokenBase}])`)
-const result = await transform(src, {
+assert.equal(packedCss.replace(new RegExp(cssTokenRange, 'g'), token => cssPhrases[cssTokenIndex(token)]), compactCss)
+src = src.replace(cssMatch[0], () => `const cssPhrases=${javascriptLiteral(cssPhrases.join('~'))}.split("~");const css=${javascriptLiteral(packedCss)}.replace(/${cssTokenRange}/g,token=>cssPhrases[token.charCodeAt(0)>=${cssTokenBase}?token.charCodeAt(0)-${cssTokenBase}:${javascriptLiteral(cssAsciiMarkers)}.indexOf(token)])`)
+const result = await transform(withClientRegistration(src), {
   minify: true,
   keepNames: false,
   legalComments: 'none',
@@ -177,7 +191,8 @@ const result = await transform(src, {
   // 输出,比默认 \uXXXX 转义(每字 6 字节)省一半以上,给 256 KiB 单文件上限留出余量。
   charset: 'utf8',
 })
-const header = '// Generated from src/client/*.js by node scripts/build.mjs; do not edit.\n'
+// Separate the registration IIFE from any preceding script in a combined bundle.
+const header = '// Generated from src/client/*.js by node scripts/build.mjs; do not edit.\n;'
 const outPath = resolve(projectRoot, 'lib/client.js')
 writeFileSync(outPath, header + result.code)
 // 字节口径与 test/verify.mjs 的门禁一致(UTF-8 字节而非 UTF-16 字符数,中文文案算多字节)。
@@ -191,8 +206,11 @@ console.log('✓ lib/client.js within DSH STORE per-file bound (262144)')
 
 // DSH 0.2.0-rc.2 package-local chunks use the host's require.async contract.
 // Each on-demand screen has readable source and a bounded runtime asset.
-for (const chunk of ['billing-storage', 'settings-overview', 'statistics', 'openrouter', 'community', 'pricing', 'display', 'codex', 'peak', 'session-list', 'sidebar-order', 'plan-settings', 'notices']) {
+for (const chunk of ['billing-storage', 'settings-overview', 'statistics', 'openrouter', 'community', 'pricing', 'display', 'codex', 'peak', 'session-list', 'sidebar-order', 'plan-settings', 'notices', 'local-savings', 'sidebar-icons']) {
   let source = readFileSync(resolve(projectRoot, `src/${chunk}/index.js`), 'utf8')
+  if (['peak', 'display', 'pricing'].includes(chunk)) source = source.replace('factory: require => {', 'factory: require => {\n' + readFileSync(resolve(projectRoot, 'lib/peak-timezone.js'), 'utf8').replace(/^export /gm, '') + (chunk === 'peak' ? '' : readFileSync(resolve(projectRoot, 'src/peak/timezone-control.js'), 'utf8')))
+  if (chunk === 'pricing') source = source.replace('/* PEAK_PANEL_SOURCE */', readFileSync(resolve(projectRoot, 'src/pricing/peak-panel.js'), 'utf8'))
+  if (chunk === 'plan-settings') source = source.replace('/* SUBSCRIPTION_CATALOG_SOURCE */ {}', () => javascriptLiteral(SUBSCRIPTION_CATALOG))
   if (chunk === 'display') {
     source = source.replace('/* DISPLAY_NATIVE_SOURCE */', readFileSync(resolve(projectRoot, 'src/display/native.js'), 'utf8'))
     source = source.replace('/* DISPLAY_APPEARANCE_SOURCE */', readFileSync(resolve(projectRoot, 'src/display/appearance.js'), 'utf8'))
@@ -200,16 +218,26 @@ for (const chunk of ['billing-storage', 'settings-overview', 'statistics', 'open
     const styles = await transform(readFileSync(resolve(projectRoot, 'src/display/preview.css'), 'utf8'), { loader: 'css', minify: true })
     source = source.replace("'DISPLAY_STYLE_SOURCE'", () => javascriptLiteral(styles.code))
   }
+  if (chunk === 'sidebar-icons') {
+    source = source.replace('/* ICON_HELPERS_SOURCE */', readFileSync(resolve(projectRoot, 'src/sidebar-icons/presentation.js'), 'utf8').replace(/^export /gm, ''))
+    const styles = await transform(readFileSync(resolve(projectRoot, 'src/sidebar-icons/style.css'), 'utf8'), { loader: 'css', minify: true })
+    source = source.replace("'SIDEBAR_ICONS_STYLE_SOURCE'", () => javascriptLiteral(styles.code))
+  }
   if (chunk === 'peak') {
     source = source.replace('/* PEAK_COMPONENT_SOURCE */', readFileSync(resolve(projectRoot, 'src/peak/component.js'), 'utf8'))
     source = source.replace('/* PEAK_ALERT_SOURCE */', readFileSync(resolve(projectRoot, 'src/peak/alert.js'), 'utf8'))
     const styles = await transform(readFileSync(resolve(projectRoot, 'src/peak/style.css'), 'utf8'), { loader: 'css', minify: true })
     source = source.replace("'PEAK_STYLE_SOURCE'", () => javascriptLiteral(styles.code))
   }
-  const result = await transform(source, { minify: true, target: 'es2022', charset: 'utf8', legalComments: 'none' })
-  for (const [name, text] of [[`src/${chunk}/index.js`, source], [`lib/client.${chunk}.js`, result.code]]) {
+  let registration
+  runInNewContext(source, { window: { __ModuleLoader__: { load: value => { registration = value } } } })
+  assert.equal(registration?.id, 'dsh-cost-meter', `${chunk}: wrong client owner`)
+  assert.equal(registration?.chunk, `client.${chunk}.js`, `${chunk}: missing or incorrect chunk registration`)
+  const result = await transform(withClientRegistration(source), { minify: true, target: 'es2022', charset: 'utf8', legalComments: 'none' })
+  const code = ';' + result.code
+  for (const [name, text] of [[`src/${chunk}/index.js`, source], [`lib/client.${chunk}.js`, code]]) {
     if (Buffer.byteLength(text) > 262144) throw new Error(`${name} exceeds the 262144-byte bound`)
   }
-  writeFileSync(resolve(projectRoot, `lib/client.${chunk}.js`), result.code)
-  console.log(`✓ lib/client.${chunk}.js ${Buffer.byteLength(result.code)} bytes (loaded on demand)`)
+  writeFileSync(resolve(projectRoot, `lib/client.${chunk}.js`), code)
+  console.log(`✓ lib/client.${chunk}.js ${Buffer.byteLength(code)} bytes (loaded on demand)`)
 }

@@ -8,6 +8,7 @@ import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { build } from 'esbuild'
 import { sanitizeConfig, zeroDay } from '../lib/store.js'
+import { normalizePrice, tierFor } from '../lib/pricing.js'
 import { javascriptLiteral as literal } from '../scripts/javascript-literal.mjs'
 
 const uiModules = resolve(process.env.DSH_TEST_UI_MODULES ?? process.env.DSH_TEST_NODE_MODULES ?? '.tmp-context-host/node_modules')
@@ -37,12 +38,12 @@ import {createRoot} from ${literal(req.resolve('react-dom/client'))};
 import {createPortal} from ${literal(req.resolve('react-dom'))};
 window.__ModuleLoader__={load:mod=>{const value=mod.factory(name=>name==='react'?React:name==='react-dom'?{createPortal}:{Tooltip:({children})=>children});if(mod.chunk==='client.pricing.js')window.priceUI=value;else window.costUI=value}};
 ${client}
-${readSource('src/pricing/index.js')}
+${readSource('lib/client.pricing.js')}
 const {CostSection,parseConfig}=window.costUI.preview;
 const state=${literal(initialState)};state.config=parseConfig(state.config,'config');
 if(new URLSearchParams(location.search).has('many'))state.today.byProviderModel=state.month.byProviderModel=Object.fromEntries(Array.from({length:500},(_,i)=>['channel:model-'+i,{calls:1,input:1,output:1,cost:0}]));
 window.patches=[];window.reprices=[];window.historyReads=0;
-const pricing=window.priceUI.mount({effect:fn=>fn(),get:key=>key==='remote'?{$mount:async()=>()=>{}}:{getRepricingHistory:async()=>{window.historyReads++;return ({ok:true,value:window.reprices.map((item,i)=>({at:1792050000000+i,before:1,after:2,days:1,sessions:1,skipped:0,...(typeof item==='object'?{model:item.model}:{})}))})},repriceHistory:async confirmed=>{window.reprices.push(confirmed);return {ok:true,value:{ok:true,message:'已重算，原金额已保留。'}}},repriceModelHistory:async (confirmed,model)=>{window.reprices.push({confirmed,model});return {ok:true,value:{ok:true,message:'单模型重算完成，其他模型保持不变。'}}}}});
+const pricing=window.priceUI.mount({effect:fn=>fn(),get:key=>key==='remote'?{$mount:async()=>()=>{}}:{getRepricingHistory:async()=>{window.historyReads++;return ({ok:true,value:window.reprices.map((item,i)=>({at:1792050000000+i,before:1,after:2,days:1,sessions:1,skipped:0,...(typeof item==='object'?{model:item.model,skipped:1,skippedDetails:[{sessionId:'1fb3107d',date:'2026-11-15',model:item.model,reason:'usage',fields:[{field:'input',ledger:210789,log:210195},{field:'output',ledger:31779,log:31767},{field:'calls',ledger:85,log:84}]}]}:{})}))})},repriceHistory:async confirmed=>{window.reprices.push(confirmed);return {ok:true,value:{ok:true,message:'已重算，原金额已保留。'}}},repriceModelHistory:async (confirmed,model)=>{window.reprices.push({confirmed,model});return {ok:true,value:{ok:true,message:'单模型重算完成，其他模型保持不变。'}}}}});
 const api={reload:async()=>{},loadPricing:()=>pricing,loadOpenRouter:async()=>()=>null,updateConfig:async patch=>{window.patches.push(patch)}};
 const root=createRoot(document.getElementById('root')),render=()=>root.render(React.createElement(CostSection,{useCost:()=>({state,status:'ready'}),api}));
 window.updateAvailability=value=>{state.modelDirectory=value;render()};render();
@@ -78,6 +79,20 @@ const luminance = color => {
 }
 const output = resolve('.tmp-pricing-theme-browser'); mkdirSync(output, { recursive: true })
 try {
+  await page.goto(url); await page.waitForFunction(() => window.fixtureReady)
+  await page.locator('[data-billing-currency-mismatch]').waitFor()
+  assert.match(await page.locator('[data-billing-check]').innerText(), /USD[\s\S]*CNY/)
+  await page.locator('[data-billing-check]').screenshot({ path: join(output, 'billing-check.png') })
+  await page.getByRole('button', { name: '查看并同步官方价表', exact: true }).click()
+  assert.equal(await page.getByRole('tab', { name: '同步与规则', exact: true }).getAttribute('aria-selected'), 'true')
+  assert.equal(await page.evaluate(() => window.patches.length), 0, 'billing check only navigates; it cannot replace a price table')
+  const timezone = page.getByLabel('峰谷显示时区', { exact: true })
+  assert.equal(await timezone.inputValue(), 'auto')
+  await timezone.selectOption('Asia/Kolkata')
+  await page.waitForFunction(() => window.patches.some(patch => patch.peakTimeZone === 'Asia/Kolkata'))
+  assert.equal(await timezone.inputValue(), 'Asia/Kolkata')
+  assert.equal(await page.evaluate(() => window.reprices.length), 0, 'changing the display timezone does not reprice history')
+  // Start the model-only loading checks in a fresh page after visiting sync/history.
   await page.goto(url); await page.waitForFunction(() => window.fixtureReady)
   await page.getByRole('tab', { name: '价格', exact: true }).click()
   await page.locator('.cm-match-row').first().waitFor()
@@ -162,14 +177,22 @@ try {
   await unknown.getByRole('button', { name: '自定义', exact: true }).click()
   const custom = page.getByRole('group', { name: /fixture:unknown.*自定义价格/ })
   await custom.waitFor()
-  const inputPrice = custom.getByRole('textbox', { name: /输入 · 未命中缓存/ })
-  const outputPrice = custom.getByRole('textbox', { name: /· 输出$/ })
-  await inputPrice.fill('2 × 0.8'); await inputPrice.press('Enter')
-  await page.waitForFunction(() => window.patches.some(p => p.prices?.custom?.['fixture:unknown']?.multiplier === .8))
-  assert.equal(await inputPrice.inputValue(), '2 × 0.8')
-  await custom.getByRole('checkbox', { name: '分别设置倍率' }).check()
+  const inputPrice = custom.getByRole('textbox', { name: 'fixture:unknown · 输入 · 未命中缓存', exact: true })
+  const outputPrice = custom.getByRole('textbox', { name: 'fixture:unknown · 输出', exact: true })
+  const inputFactor = custom.getByRole('spinbutton', { name: 'fixture:unknown · 输入 · 未命中缓存 · 倍率', exact: true })
+  const allBaseFactors = custom.getByRole('spinbutton', { name: 'fixture:unknown · 基础价 · 统一设置倍率', exact: true })
+  const customPrice = () => page.evaluate(() => window.patches.filter(p => p.prices?.custom?.['fixture:unknown']).at(-1).prices.custom['fixture:unknown'])
+  assert.equal(await inputFactor.inputValue(), '1')
+  assert.equal(await allBaseFactors.inputValue(), '1')
+  await inputPrice.fill('2'); await inputPrice.press('Enter')
+  await allBaseFactors.fill('0.8'); await allBaseFactors.press('Enter')
+  await page.waitForFunction(() => window.patches.some(p => p.prices?.custom?.['fixture:unknown']?.multipliers?.['base.cacheMiss'] === .8))
+  assert.equal(await inputPrice.inputValue(), '2')
+  assert.equal(await inputFactor.inputValue(), '0.8')
   await outputPrice.fill('8 x 0.5'); await outputPrice.press('Tab')
   await page.waitForFunction(() => window.patches.some(p => p.prices?.custom?.['fixture:unknown']?.multipliers?.['base.output'] === .5))
+  assert.equal(await allBaseFactors.inputValue(), '', 'different per-field factors have no misleading common value')
+  assert.equal(await inputFactor.inputValue(), '0.8', 'editing output leaves the input factor unchanged')
   assert.deepEqual(await custom.locator('.cm-effective-grid strong').allTextContents(), ['$1.6', '$0', '$4'], 'effective prices use the shared and separate factors')
   const countBeforeInvalid = await page.evaluate(() => window.patches.length)
   await inputPrice.fill('2 × nope'); await inputPrice.press('Enter')
@@ -177,13 +200,54 @@ try {
   assert.equal(await inputPrice.getAttribute('aria-invalid'), 'true')
   assert.equal(await page.evaluate(() => window.patches.length), countBeforeInvalid, 'invalid multiplication never saves')
   await inputPrice.press('Escape')
-  await custom.getByRole('checkbox', { name: '分别设置倍率' }).uncheck()
+  await allBaseFactors.fill('0.8'); await allBaseFactors.press('Enter')
   await inputPrice.fill('2.3 x 0.8')
   await unknown.getByRole('button', { name: '自动匹配', exact: true }).click()
   await page.waitForTimeout(180)
   await unknown.getByRole('button', { name: '自定义', exact: true }).click()
-  assert.equal(await inputPrice.inputValue(), '2.3 × 0.8', 'switching sources commits and retains the last unblurred quote')
+  assert.equal(await inputPrice.inputValue(), '2.3', 'switching sources commits and retains the last unblurred quote')
+  assert.equal(await inputFactor.inputValue(), '0.8')
   await inputPrice.fill('2 × 0.8'); await inputPrice.press('Enter')
+  // #476: peak/off-peak fields have independent factors and a common control for each tier.
+  await custom.locator('summary').filter({ hasText: '峰谷价格与时段' }).click()
+  await custom.getByRole('checkbox', { name: '启用峰谷价格', exact: true }).check()
+  const peakInput = custom.getByRole('textbox', { name: 'fixture:unknown · 峰价 · 输入', exact: true })
+  const peakInputFactor = custom.getByRole('spinbutton', { name: 'fixture:unknown · 峰价 · 输入 · 倍率', exact: true })
+  const peakOutputFactor = custom.getByRole('spinbutton', { name: 'fixture:unknown · 峰价 · 输出 · 倍率', exact: true })
+  const allPeakFactors = custom.getByRole('spinbutton', { name: 'fixture:unknown · 峰价 · 统一设置倍率', exact: true })
+  const allOffPeakFactors = custom.getByRole('spinbutton', { name: 'fixture:unknown · 谷价 · 统一设置倍率', exact: true })
+  assert.equal(await peakInputFactor.inputValue(), '0.8', 'enabling tiers retains the effective base rates')
+  await peakInput.fill('4'); await peakInput.press('Enter')
+  await allPeakFactors.fill('0.5'); await allPeakFactors.press('Enter')
+  await allOffPeakFactors.fill('0.25'); await allOffPeakFactors.press('Enter')
+  await peakOutputFactor.fill('0.75'); await peakOutputFactor.press('Enter')
+  await page.waitForFunction(() => window.patches.some(p => p.prices?.custom?.['fixture:unknown']?.multipliers?.['peak.output'] === .75))
+  assert.equal(await peakInputFactor.inputValue(), '0.5')
+  assert.equal(await allPeakFactors.inputValue(), '')
+  assert.equal(await allBaseFactors.inputValue(), '0.8')
+  assert.deepEqual(await custom.locator('[data-effective-tier=peak] strong').allTextContents(), ['$2', '$0', '$6'])
+  assert.deepEqual(await custom.locator('[data-effective-tier=offPeak] strong').allTextContents(), ['$0.5', '$0', '$2'])
+  const normalized = normalizePrice(await customPrice())
+  assert.ok(normalized, 'the saved quote passes production validation')
+  const time = Date.parse('2026-11-06T02:00:00Z')
+  const peakConfig = { enabled: true, effectiveAtMs: 0, windows: [{ start: 1, end: 4 }], holidays: [] }
+  assert.equal(tierFor(normalized, time, peakConfig).cacheMiss, 2)
+  assert.equal(tierFor(normalized, time, peakConfig).output, 6)
+  assert.equal(tierFor(normalized, time + 4 * 3600000, peakConfig).cacheMiss, .5)
+  assert.equal(tierFor(normalized, time + 4 * 3600000, peakConfig).output, 2)
+  const beforeInvalidFactor = await page.evaluate(() => window.patches.length)
+  await peakInputFactor.fill('-1'); await peakInputFactor.press('Enter')
+  assert.equal(await peakInputFactor.getAttribute('aria-invalid'), 'true')
+  await page.waitForTimeout(180)
+  assert.equal(await page.evaluate(() => window.patches.length), beforeInvalidFactor, 'invalid factors never save')
+  await peakInputFactor.press('Escape')
+  await peakInputFactor.fill('0'); await peakInputFactor.press('Enter')
+  await page.waitForFunction(() => window.patches.some(p => p.prices?.custom?.['fixture:unknown']?.multipliers?.['peak.cacheMiss'] === 0))
+  assert.equal(tierFor(normalizePrice(await customPrice()), time, peakConfig).cacheMiss, 0)
+  await page.screenshot({ path: join(output, 'peak-price-multipliers.png'), fullPage: true })
+  await custom.getByRole('checkbox', { name: '启用峰谷价格', exact: true }).uncheck()
+  await custom.locator('summary').filter({ hasText: '更多计费项' }).click()
+  await custom.getByRole('checkbox', { name: '启用长上下文价格', exact: true }).check()
   for (const width of [390, 1100]) {
     await page.setViewportSize({ width, height: 1000 })
     const bounds = await custom.evaluate(node => ({ width: node.getBoundingClientRect().width, scroll: node.scrollWidth, client: node.clientWidth,
@@ -192,6 +256,7 @@ try {
     assert.ok(bounds.fields.length >= 3 && bounds.fields.every(value => value >= 80), 'custom price fields remain readable at '+width)
   }
   await page.screenshot({ path: join(output, 'custom-channel-price.png'), fullPage: true })
+  await custom.screenshot({ path: join(output, 'custom-long-context.png') })
   await outputPrice.fill('10 x 0.8')
   await unknown.getByRole('button', { name: 'fixture:unknown · 设置价格', exact: true }).click()
   await page.waitForFunction(() => window.patches.some(p => p.prices?.custom?.['fixture:unknown']?.output === 10))
@@ -223,6 +288,9 @@ try {
   await page.waitForFunction(() => window.reprices.length === 2)
   assert.deepEqual(await page.evaluate(() => window.reprices[1]), { confirmed: true, model: 'deepseek:deepseek-v4-flash' })
   await page.getByRole('cell', { name: 'deepseek:deepseek-v4-flash', exact: true }).waitFor()
+  await page.locator('.cm-repricing-skipped summary').click()
+  assert.match(await page.locator('.cm-repricing-skipped').innerText(), /input: 账本 210789 − 日志 210195 = 594/)
+  assert.match(await page.locator('.cm-repricing-skipped').innerText(), /calls: 账本 85 − 日志 84 = 1/)
   await page.setViewportSize({ width: 430, height: 900 })
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, '单模型重算在窄窗口不溢出')
   await page.screenshot({ path: join(output, 'single-model-repricing.png'), fullPage: true })
@@ -281,6 +349,37 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('.cm-match-row').length === 0)
   await page.evaluate(() => window.updateAvailability(undefined))
   await page.waitForFunction(() => document.querySelectorAll('.cm-match-row').length === 2)
+  await page.getByRole('tab', { name: '同步与规则', exact: true }).click()
+  await page.getByText('按渠道设置峰谷时段', { exact: true }).click()
+  const schedules = page.locator('.cm-provider-schedules')
+  await schedules.getByLabel('渠道 ID', { exact: true }).fill('fixture')
+  await schedules.getByRole('checkbox', { name: '自定义峰时段', exact: true }).check()
+  await schedules.getByLabel('峰时段（UTC）', { exact: true }).fill('22.5-2, 6-10')
+  await schedules.getByLabel('峰时段（UTC）', { exact: true }).press('Enter')
+  await schedules.getByLabel('日历规则', { exact: true }).selectOption('daily')
+  await schedules.getByLabel('节假日', { exact: true }).selectOption('none')
+  await page.waitForFunction(() => window.patches.some(p => p.prices?.providers?.fixture?.peakWindows?.[0]?.start === 22.5 && p.prices.providers.fixture.peakSchedule === 'daily' && p.prices.providers.fixture.peakHolidays === null))
+  for (const width of [1100, 390]) {
+    await page.setViewportSize({ width, height: 950 })
+    assert.equal(await schedules.evaluate(node => node.scrollWidth > node.clientWidth + 1), false)
+    await schedules.screenshot({ path: join(output, 'provider-peak-' + width + '.png') })
+  }
+  await page.getByRole('tab', { name: '模型定价', exact: true }).click()
+  const relay = page.locator('[data-model-key="fixture:unknown"]')
+  await relay.getByRole('button', { name: 'fixture:unknown · 设置价格', exact: true }).click()
+  await relay.getByRole('button', { name: '自定义', exact: true }).click()
+  const peakEditor = page.getByRole('group', { name: /fixture:unknown.*自定义价格/ })
+  await peakEditor.getByText('峰谷价格与时段', { exact: true }).click()
+  await peakEditor.getByRole('checkbox', { name: '启用峰谷价格', exact: true }).check()
+  const peakRateInput = peakEditor.getByRole('group', { name: '峰价', exact: true }).getByRole('textbox', { name: 'fixture:unknown · 峰价 · 输入', exact: true })
+  const offPeakRateInput = peakEditor.getByRole('group', { name: '谷价', exact: true }).getByRole('textbox', { name: 'fixture:unknown · 谷价 · 输入', exact: true })
+  await peakRateInput.fill('4'); await peakRateInput.press('Enter')
+  await offPeakRateInput.fill('2'); await offPeakRateInput.press('Enter')
+  await page.waitForFunction(() => window.patches.some(p => p.prices?.custom?.['fixture:unknown']?.peak?.cacheMiss === 4 && p.prices.custom['fixture:unknown'].offPeak?.cacheMiss === 2 && p.prices.custom['fixture:unknown'].billingMode === 'deepseek-peak'))
+  const checkboxLayout = await peakEditor.getByRole('checkbox', { name: '启用峰谷价格', exact: true }).evaluate(node => ({ display: getComputedStyle(node.parentElement).display, width: node.getBoundingClientRect().width }))
+  assert.equal(checkboxLayout.display, 'flex')
+  assert.ok(checkboxLayout.width < 24, 'peak-pricing checkbox keeps its native width')
+  await peakEditor.screenshot({ path: join(output, 'custom-peak-prices.png') })
   assert.deepEqual(external, [], 'theme test sends no external requests')
   assert.deepEqual(errors, [], 'settings render without browser errors')
   writeFileSync(join(output, 'report.json'), JSON.stringify({ checks, baseline, errors, external }, null, 2) + '\n')

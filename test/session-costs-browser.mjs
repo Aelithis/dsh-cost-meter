@@ -46,14 +46,14 @@ const StatisticsPage=props=>h(UI.SessionStatistics,{...props,contextIntegration:
 StatisticsPage.prefetch=props=>UI.prefetchStatistics(api,props);
 api.loadStatistics=async()=>StatisticsPage;
 const root=createRoot(document.getElementById('root'));
-window.renderSession=(id='current')=>root.render(h(window.mainUI.preview.SessionStatisticsButton,{sessionId:id,useCost:()=>({state}),api,entryPosition:'dock'}));
+window.renderSession=(id='current')=>root.render(h(window.mainUI.preview.SessionStatisticsButton,{sessionId:id,useCost:()=>({state}),api}));
 window.renderSession();window.fixtureReady=true;
 `
 const compiled = await build({ stdin: { contents: source, resolveDir: process.cwd(), loader: 'js' }, bundle: true, write: false, format: 'iife', platform: 'browser' })
 const html = `<!doctype html><html><head><meta charset="utf-8"><style>
 :root{--dsh-frame-chrome-top:40px;--dsw-alias-label-primary:#25262b;--dsw-alias-label-secondary:#737780;--dsw-alias-label-tertiary:#858a94;--dsw-alias-border-l1:#e5e7eb;--dsw-alias-border-l3:#e5e7eb;--dsw-alias-bg-base:#fff;--dsw-alias-bg-layer-1:#f7f8fa;--dsw-alias-bg-layer-2:#fff;--dsw-alias-state-business-primary:#4d6bfe;--dsw-alias-interactive-bg-hover:#f0f1f4;--ds-font-family-sans:system-ui}
 html[data-theme=dark]{color-scheme:dark;--dsw-alias-label-primary:#ececee;--dsw-alias-label-secondary:#a6a6ad;--dsw-alias-border-l1:#38383c;--dsw-alias-border-l3:#38383c;--dsw-alias-bg-base:#202022;--dsw-alias-bg-layer-1:#29292c;--dsw-alias-bg-layer-2:#29292c;--dsw-alias-state-business-primary:#6a83ff;--dsw-alias-interactive-bg-hover:#38383c}
-body{margin:0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:13px/1.6 system-ui}header.fixture{height:40px;padding:0 18px;display:flex;align-items:center;justify-content:space-between;background:var(--dsw-alias-bg-layer-1)}main{padding:32px}button{font:inherit}
+body{margin:0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:13px/1.6 system-ui}header.fixture{height:40px;padding:0 18px;display:flex;align-items:center;justify-content:space-between;background:var(--dsw-alias-bg-layer-1)}main{padding:32px}button{font:inherit}.cm-stat-header{display:inline-flex!important}
 </style></head><body><header class="fixture"><span>DeepSeek Harness</span><span>—　□　×</span></header><main><h1>查询电脑显卡及 AI 算力</h1><p>本地界面验证 · 示例数据 · 不调用模型</p><div id="root"></div></main><script src="/app.js"></script></body></html>`
 const server = createServer((request, response) => {
   if (request.url === '/app.js') { response.setHeader('content-type', 'application/javascript'); response.end(compiled.outputFiles[0].contents) }
@@ -81,6 +81,17 @@ try {
   assert.equal(await page.locator('dialog').count(),0,'hover prepares data before opening a dialog')
   await page.locator('.cm-stat-entry').click()
   await page.locator('.cm-stat-metrics').waitFor()
+  for (const width of [1280, 460, 360]) {
+    await page.setViewportSize({ width, height: 900 })
+    const geometry = await page.locator('.cm-session-toolbar').evaluate(toolbar => {
+      const tabs = toolbar.querySelector('nav').getBoundingClientRect(), controls = toolbar.querySelector('.cm-stat-controls').getBoundingClientRect(), box = toolbar.getBoundingClientRect()
+      return { tabs: { top: tabs.top, bottom: tabs.bottom, right: tabs.right }, controls: { top: controls.top, bottom: controls.bottom, left: controls.left, right: controls.right }, box: { bottom: box.bottom, right: box.right } }
+    })
+    assert.ok(geometry.controls.bottom <= geometry.box.bottom && geometry.controls.right <= geometry.box.right + 1, 'actions stay within the toolbar and above the separator')
+    assert.ok(geometry.controls.top >= geometry.tabs.bottom || geometry.controls.left >= geometry.tabs.right, 'tabs and actions never overlap')
+    if (width === 1280) assert.ok(Math.abs((geometry.tabs.top + geometry.tabs.bottom - geometry.controls.top - geometry.controls.bottom) / 2) <= 1, '#438 controls align vertically with tabs')
+  }
+  await page.setViewportSize({ width: 1280, height: 900 })
   assert.equal(await page.getByText('正在读取本对话的用量明细…',{exact:true}).count(),0,'preloaded data is present on opening')
   await page.evaluate(()=>{window.rpcDelay=0})
   await page.getByRole('button',{name:'归类占比',exact:true}).click()
@@ -271,7 +282,7 @@ try {
   await page.screenshot({path:join(output,'04-theme-popup-opacity.png')})
   await page.locator('.cm-stat-dialog-body').evaluate(n=>{n.scrollTop=0})
   await page.evaluate(()=>{window.refreshFails=true})
-  await page.locator('.cm-stat-session>.cm-stat-panel-head').getByRole('button',{name:'刷新',exact:true}).click()
+  await page.locator('.cm-session-toolbar').getByRole('button',{name:'刷新',exact:true}).click()
   await page.getByRole('alert').filter({hasText:'offline fixture'}).waitFor()
   assert.match(await page.locator('.cm-stat-metrics').innerText(),/0\.027104/,'failed refresh preserves current results')
   await page.keyboard.press('Escape'); assert.equal(await page.locator('dialog[open]').count(),0)

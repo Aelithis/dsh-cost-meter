@@ -26,9 +26,16 @@ const usdZero = { currency: 'USD', balance: '0E-16' }
 const cnyMain = { currency: 'CNY', balance: '9.9498186300000000' }
 const cnyBonus = { currency: 'CNY', balance: '1.00' }
 const totalOf = (main, bonus) => Number(main.balance) + Number(bonus.balance)
+const balanceResponse = total => Response.json({ is_available: true, balance_infos: [{ currency: 'USD', total_balance: String(total), granted_balance: '0', topped_up_balance: String(total) }] })
+const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
+const startedWithin = async promise => {
+  let timeout
+  try { await Promise.race([promise, new Promise((_, reject) => { timeout = setTimeout(() => reject(Error('balance request did not start')), 5000) })]) }
+  finally { clearTimeout(timeout) }
+}
 
 /** 独立实例:balanceCache 在服务内,复用会命中缓存。 */
-function mount({ account = null, accountState, describe, proxyAccount = false, section = {}, secrets = {} }) {
+function mount({ account = null, accountState, describe, proxyAccount = false, section = {}, secrets = {}, settingsService, llm, launchEnvironment, fetchBalance }) {
   const events = new Map(), cleanups = []
   let currentAccount = account === null ? undefined : {
     getBalance: async client => { accountCalls.push(client); return account(client) },
@@ -37,26 +44,26 @@ function mount({ account = null, accountState, describe, proxyAccount = false, s
   }
   const requests = [], accountCalls = []
   globalThis.fetch = async (url, init) => {
-    requests.push({ url, headers: init.headers ?? {}, redirect: init.redirect })
-    return Response.json(balanceBody)
+    requests.push({ url, headers: init.headers ?? {}, redirect: init.redirect, signal: init.signal })
+    return fetchBalance ? fetchBalance(url, init) : Response.json(balanceBody)
   }
   let service
   apply({
     get: name => name === 'settings'
-      ? { get: () => section }
+      ? settingsService ?? { get: ns => ns === 'llm-deepseek' ? section : undefined }
       : name === 'credentials'
         ? { resolve: async ref => (secrets[String(ref)] ? { value: secrets[String(ref)] } : undefined),
             describe: async ref => { if (describe) await describe(String(ref)); return { configured: Boolean(secrets[String(ref)]), source: 'file' } } }
         : name === 'deepseekAccount'
           ? proxyAccount && currentAccount ? new Proxy(currentAccount, { get: (target, key) => key === Symbol.for('cordis.original') ? target : Reflect.get(target, key) }) : currentAccount
-          : undefined,
+          : name === 'llm' ? llm : name === 'launchEnvironment' ? launchEnvironment : undefined,
     provide: (name, value) => { if (name === 'costMeter') service = value },
     on: (name, fn) => { if (!events.has(name)) events.set(name, []); events.get(name).push(fn); return () => {} }, inject() {},
     effect: (fn, label) => {
       const cleanup = fn()
       // Wallet fixtures use isolated homes and fetch mocks. Background history and
-      // public price refreshes belong to separate tests and must not cross fixtures.
-      if (label === 'cost-meter: backfill timer' || label === 'cost-meter: openrouter refresh timer') cleanup?.()
+      // public price / exchange-rate refreshes belong to separate tests and must not cross fixtures.
+      if (label === 'cost-meter: backfill timer' || label === 'cost-meter: openrouter refresh timer' || label === 'cost-meter: daily exchange rates') cleanup?.()
       else if (typeof cleanup === 'function') cleanups.push(cleanup)
     }, logger: { info() {}, warn() {}, error() {} },
   })
@@ -70,13 +77,13 @@ function mount({ account = null, accountState, describe, proxyAccount = false, s
 }
 
 /** 每个场景一份账本:locale 决定消息语言,config.balance.display 决定余额卡片是否启用。 */
-function useHome(tag, env = {}, balanceRef = null, days = {}) {
+function useHome(tag, env = {}, balanceRef = null, days = {}, config = {}) {
   const dir = join(root, tag)
   mkdirSync(join(dir, 'storages', 'cost-meter'), { recursive: true })
   writeFileSync(join(dir, 'storages', 'cost-meter', 'ledger.json'), JSON.stringify({
     version: 1,
     days, balanceRef,
-    config: { locale: 'en', goQuota: { enabled: false }, balance: { display: 'both' } },
+    config: { locale: 'en', goQuota: { enabled: false }, balance: { display: 'both' }, ...config },
   }))
   process.env.DSH_HOME = dir
   for (const name of envNames) if (name !== 'DSH_HOME') delete process.env[name]
@@ -126,13 +133,44 @@ try {
   assert.equal(signedOut.requests.at(-1).headers.authorization, 'Bearer ' + modelKey)
   assert.equal(result.state.balance.currency, 'USD', '回退路径沿用 balance_infos 口径')
 
-  // ④ 已登录但账号侧查询失败:报账号侧失败,不回退模型凭据、不显示为零余额。
+  // ④ 同时登录官方账号又配置了模型 API Key:付费账户是这个 Key 的账户,登录账号的钱包不得顶替。
+  useHome('account-plus-model-key')
+  const bothSources = mount({ account: () => ({ status: 'ready', value: [cnyMain], bonusWallets: [] }), section: { apiKeyEnv: 'DSH_DEEPSEEK_API_KEY' }, secrets: { DSH_DEEPSEEK_API_KEY: modelKey } })
+  result = await bothSources.service.refreshBalance()
+  assert.equal(result.ok, true, '模型 Key 存在时余额来自该 Key')
+  assert.equal(bothSources.requests.at(-1).headers.authorization, 'Bearer ' + modelKey, '请求使用模型渠道的 Key')
+  assert.equal(result.state.balance.totalBalance, 3, '显示模型 Key 账户的钱包,而不是登录账号的钱包')
+  assert.equal(bothSources.accountCalls.length, 0, '模型 Key 存在时不读取登录账号钱包')
+
+  // ⑤ 模型 Key 指向非官方端点(中转/代理):没有可读的官方钱包,不回退账号钱包冒名顶替。
+  useHome('model-key-nonofficial')
+  const relay = mount({ account: () => ({ status: 'ready', value: [cnyMain], bonusWallets: [] }), section: { apiKeyEnv: 'DSH_DEEPSEEK_API_KEY', baseURL: 'https://relay.example.com' }, secrets: { DSH_DEEPSEEK_API_KEY: modelKey } })
+  result = await relay.service.refreshBalance()
+  assert.equal(result.ok, false, '非官方端点不返回余额')
+  assert.equal(result.state.balance.status, 'off', '守卫失败按 off 呈现,不显示任何钱包')
+  assert.match(result.state.balance.message, /official endpoint/i, '提示端点不受支持')
+  assert.equal(relay.accountCalls.length, 0, '非官方端点不回退账号钱包')
+
+  // The Messages API roots used by current DSH still query the fixed balance URL.
+  for (const [index, baseURL] of ['https://api.deepseek.com/anthropic', 'https://api.deepseek.com/anthropic/v1/'].entries()) {
+    useHome('messages-endpoint-' + index)
+    const messages = mount({ section: { baseURL }, secrets: { DEEPSEEK_API_KEY: modelKey } })
+    assert.equal((await messages.service.refreshBalance()).ok, true)
+    assert.equal(messages.requests[0].url, 'https://api.deepseek.com/user/balance')
+    assert.equal(messages.requests[0].redirect, 'error')
+    await messages.dispose()
+  }
+  for (const [index, baseURL] of ['https://api.deepseek.com/anthropic/v2', 'https://api.deepseek.com/other', 'http://api.deepseek.com/anthropic', 'https://api.deepseek.com:444/anthropic', 'https://api.deepseek.com/anthropic?key=test', 'https://api.deepseek.com/anthropic#test', 'https://user:pass@api.deepseek.com/anthropic'].entries()) {
+    useHome('rejected-endpoint-' + index)
+    const rejected = mount({ section: { baseURL }, secrets: { DEEPSEEK_API_KEY: modelKey } })
+    assert.equal((await rejected.service.refreshBalance()).state.balance.status, 'off')
+    assert.equal(rejected.requests.length, 0, 'unsupported paths, protocols and URL credentials stay blocked')
+    await rejected.dispose()
+  }
+
+  // ⑥ 已登录、未配置模型 API Key,账号侧查询失败:报账号侧失败,不显示为零余额。
   useHome('account-failed')
-  const failed = mount({
-    account: () => ({ status: 'failed' }),
-    section: { apiKeyEnv: 'DSH_DEEPSEEK_API_KEY' },
-    secrets: { DSH_DEEPSEEK_API_KEY: modelKey },
-  })
+  const failed = mount({ account: () => ({ status: 'failed' }) })
   result = await failed.service.refreshBalance()
   assert.equal(result.ok, false, '账号侧失败不报成功')
   assert.equal(result.state.balance.status, 'error', '账号失败在自动轮询和设置面板保持可见')
@@ -140,39 +178,31 @@ try {
   assert.equal(failed.requests.length, 0, '账号侧失败不得改发开放平台请求')
   stateSchema.parse(result.state)
 
-  // ⑤ 账号服务抛错不得切换到模型 Key 的另一账户,原始诊断不外泄。
+  // ⑦ 账号服务抛错保留失败状态,原始诊断不外泄。
   useHome('account-throws')
-  const thrown = mount({
-    account: () => { throw new Error(sensitiveDetail) },
-    section: { apiKeyEnv: 'DSH_DEEPSEEK_API_KEY' },
-    secrets: { DSH_DEEPSEEK_API_KEY: modelKey },
-  })
+  const thrown = mount({ account: () => { throw new Error(sensitiveDetail) } })
   result = await thrown.service.refreshBalance()
   assert.equal(result.ok, false, '账号服务抛错保留失败状态')
   assert.equal(result.state.balance.status, 'error')
   assert.equal(thrown.requests.length, 0, '账号异常不回退模型凭据')
   assert.ok(!JSON.stringify(result).includes(sensitiveDetail), '原始账号诊断不下发客户端')
 
-  // ⑥ 无账号服务(web/CLI profile):来源与改动前一致。
+  // ⑧ 无账号服务(web/CLI profile):来源与改动前一致。
   useHome('no-account-service')
   const legacy = mount({ account: null, section: { apiKeyEnv: 'DSH_DEEPSEEK_API_KEY' }, secrets: { DSH_DEEPSEEK_API_KEY: modelKey } })
   result = await legacy.service.refreshBalance()
   assert.equal(result.ok, true, '无账号服务时行为不变')
   assert.equal(legacy.requests.length, 1)
 
-  // ⑦ ready 结果无有效钱包是协议失败,不得误认未登录或显示零余额。
+  // ⑨ ready 结果无有效钱包是协议失败,不得误认未登录或显示零余额。
   useHome('account-empty-wallets')
-  const empty = mount({
-    account: () => ({ status: 'ready', value: [], bonusWallets: [] }),
-    section: { apiKeyEnv: 'DSH_DEEPSEEK_API_KEY' },
-    secrets: { DSH_DEEPSEEK_API_KEY: modelKey },
-  })
+  const empty = mount({ account: () => ({ status: 'ready', value: [], bonusWallets: [] }) })
   result = await empty.service.refreshBalance()
   assert.equal(result.ok, false, '空钱包列表报账号查询失败')
   assert.equal(result.state.balance.status, 'error')
   assert.equal(empty.requests.length, 0)
 
-  // ⑧ 幂等与脱敏:重复刷新不重复请求账号服务之外的来源,快照不含凭据。
+  // ⑩ 幂等与脱敏:重复刷新不重复请求账号服务之外的来源,快照不含凭据。
   const state = (await ready.service.refreshBalance()).state
   assert.equal(ready.requests.length, 0, '账号渠道不会因为重复刷新而改发官方余额请求')
   assert.ok(!JSON.stringify(state).includes(dedicatedKey), '快照不含专用凭据')
@@ -207,7 +237,7 @@ try {
     sumOverflow: { status: 'ready', value: [{ currency: 'CNY', balance: '1e308' }, { currency: 'CNY', balance: '1e308' }], bonusWallets: [] },
   })) {
     useHome('malformed-' + tag)
-    const bad = mount({ account: () => details, secrets: { DSH_DEEPSEEK_API_KEY: modelKey }, section: { apiKeyEnv: 'DSH_DEEPSEEK_API_KEY' } })
+    const bad = mount({ account: () => details })
     const response = await bad.service.refreshBalance()
     assert.equal(response.ok, false)
     assert.equal(response.state.balance.status, 'error')
@@ -215,9 +245,263 @@ try {
     assert.ok(!JSON.stringify(response).includes(sensitiveDetail))
   }
   useHome('null-during-grant-change')
-  const changedNull = mount({ account: () => null, accountState: () => 'credential-stored', secrets: { DSH_DEEPSEEK_API_KEY: modelKey }, section: { apiKeyEnv: 'DSH_DEEPSEEK_API_KEY' } })
+  const changedNull = mount({ account: () => null, accountState: () => 'credential-stored' })
   assert.equal((await changedNull.service.refreshBalance()).ok, false, '仍有凭据时 null 不认作退出')
   assert.equal(changedNull.requests.length, 0)
+
+  // Legacy settings.get and current SettingsForms.describe use the same public route.
+  for (const namespace of ['legacy', 'llm-deepseek-api-key', 'custom-deepseek']) {
+    useHome('model-route-' + namespace)
+    const home = process.env.DSH_HOME
+    const section = { apiKeyEnv: 'DEEPSEEK_API_KEY', baseURL: 'https://api.deepseek.com/anthropic' }
+    const secrets = { DEEPSEEK_API_KEY: modelKey, DSH_DEEPSEEK_API_KEY: 'TEST_MODEL_OTHER_REF' }
+    let fixture, descriptions = 0
+    const settingsPath = namespace === 'custom-deepseek' ? ['profiles', 'official'] : []
+    const settingsService = namespace === 'legacy' ? undefined : { describe: options => {
+      assert.deepEqual(options, { redactSecrets: true })
+      descriptions++
+      fixture?.emit('settings/document-updated', namespace, descriptions)
+      return [{ ns: 'llm-deepseek', value: { apiKeyEnv: 'UNRELATED_MODEL_KEY' } }, {
+        ns: namespace, value: settingsPath.length ? { profiles: { official: section } } : section,
+      }]
+    } }
+    fixture = mount({ section, secrets, settingsService,
+      llm: namespace === 'legacy' ? undefined : { listConfigurableProviders: () => [{ provider: 'deepseek-official', displayName: 'DeepSeek', settingsNs: namespace, settingsPath }] },
+      account: () => ({ status: 'ready', value: [{ currency: 'USD', balance: '40' }], bonusWallets: [] }),
+      fetchBalance: (_, init) => balanceResponse(init.headers.authorization === 'Bearer ' + modelKey ? 100 : init.headers.authorization === 'Bearer TEST_MODEL_REPLACED' ? 10 : 3),
+    })
+    assert.equal((await fixture.service.getState()).balance.totalBalance, 100)
+    fixture.emit('credentials/reference-updated', 'UNRELATED_MODEL_KEY')
+    fixture.emit('settings/document-updated', 'unrelated-settings', 1)
+    fixture.emit('settings/document-updated', namespace === 'legacy' ? 'llm-deepseek' : namespace, 2)
+    assert.equal((await fixture.service.getState()).balance.totalBalance, 100)
+    assert.equal(fixture.requests.length, 1, 'unrelated references and unchanged routes preserve the cache')
+    const readCount = descriptions
+    await fixture.service.getState(); await fixture.service.getState()
+    if (namespace !== 'legacy') assert.equal(descriptions, readCount, 'unchanged snapshots reuse the parsed route')
+
+    secrets.DEEPSEEK_API_KEY = 'TEST_MODEL_REPLACED'
+    fixture.emit('credentials/reference-updated', 'DEEPSEEK_API_KEY')
+    let switched = await fixture.service.getState()
+    assert.equal(switched.balance.totalBalance, 10, 'a model Key replacement invalidates the warm cache')
+    assert.equal(switched.reconcile.ok, true, 'different Keys do not share reconciliation baselines')
+    section.apiKeyEnv = 'DSH_DEEPSEEK_API_KEY'
+    fixture.emit('settings/document-updated', namespace === 'legacy' ? 'llm-deepseek' : namespace, 3)
+    switched = await fixture.service.getState()
+    assert.equal(switched.balance.totalBalance, 3, 'apiKeyEnv changes use the newly selected reference')
+    assert.equal(switched.reconcile.ok, true)
+    delete secrets.DSH_DEEPSEEK_API_KEY
+    fixture.emit('credentials/reference-updated', 'DSH_DEEPSEEK_API_KEY')
+    assert.equal((await fixture.service.getState()).balance.totalBalance, 40, 'removing the model Key selects the account wallet')
+    secrets.DSH_DEEPSEEK_API_KEY = 'TEST_MODEL_OTHER_REF'
+    fixture.emit('credentials/reference-updated', 'DSH_DEEPSEEK_API_KEY')
+    assert.equal((await fixture.service.getState()).balance.totalBalance, 3, 'adding a model Key invalidates a cached account wallet')
+    const requestsBeforeRelay = fixture.requests.length, accountCallsBeforeRelay = fixture.accountCalls.length
+    section.baseURL = 'https://relay.example.com'
+    fixture.emit('settings/document-updated', namespace === 'legacy' ? 'llm-deepseek' : namespace, 4)
+    assert.equal((await fixture.service.getState()).balance.status, 'off', 'a relay route clears the former official balance')
+    assert.equal(fixture.requests.length, requestsBeforeRelay)
+    assert.equal(fixture.accountCalls.length, accountCallsBeforeRelay, 'a relay does not fall back to the signed-in wallet')
+    await fixture.dispose()
+    assert.equal(JSON.parse(readFileSync(join(home, 'storages', 'cost-meter', 'ledger.json'), 'utf8')).balanceRef, null)
+  }
+
+  // Current hosts expose the launch snapshot independently of process.env.
+  useHome('launch-environment-endpoint')
+  const launch = mount({ secrets: { DEEPSEEK_API_KEY: modelKey },
+    launchEnvironment: { get: name => name === 'DEEPSEEK_BASE_URL' ? { value: 'https://relay.example.com/anthropic' } : undefined },
+  })
+  assert.equal((await launch.service.refreshBalance()).state.balance.status, 'off')
+  assert.equal(launch.requests.length, 0, 'the model launch environment controls endpoint validation')
+  await launch.dispose()
+
+  // A settings-provider failure must neither break the service nor query another account.
+  useHome('settings-read-failed')
+  let settingsBroken = true
+  const settingsFailure = mount({ secrets: { DEEPSEEK_API_KEY: modelKey },
+    account: () => ({ status: 'ready', value: [cnyMain], bonusWallets: [] }),
+    settingsService: { describe: () => { if (settingsBroken) throw Error(sensitiveDetail); return [{ ns: 'llm-deepseek', value: {} }] } },
+  })
+  result = await settingsFailure.service.refreshBalance()
+  assert.equal(result.state.balance.status, 'off')
+  assert.ok(!JSON.stringify(result).includes(sensitiveDetail))
+  assert.equal(settingsFailure.requests.length + settingsFailure.accountCalls.length, 0)
+  settingsBroken = false
+  settingsFailure.emit('settings/document-updated', 'llm-deepseek', 1)
+  assert.equal((await settingsFailure.service.getState()).balance.status, 'ok')
+  await settingsFailure.dispose()
+
+  // #500: account-only profiles remain usable while the model settings service fails.
+  useHome('account-with-unavailable-route')
+  let routeReady = false
+  const accountWithoutRoute = mount({
+    account: () => ({ status: 'ready', value: [cnyMain], bonusWallets: [] }),
+    settingsService: { describe: () => { if (!routeReady) throw Error(sensitiveDetail); return [{ ns: 'llm-deepseek', value: {} }] } },
+  })
+  assert.equal((await accountWithoutRoute.service.refreshBalance()).state.balance.totalBalance, Number(cnyMain.balance))
+  assert.equal(accountWithoutRoute.requests.length, 0)
+  routeReady = true
+  assert.equal((await accountWithoutRoute.service.refreshBalance()).ok, true, 'manual refresh recovers without a settings event')
+  await accountWithoutRoute.dispose()
+
+  // Named accounts: empty slots and repeated keys never create a second balance.
+  const multiGroup = { selected: 'account-a1', accounts: [{ id: 'account-a1', label: 'Work' }, { id: 'account-b2', label: 'Personal' }, { id: 'account-c3', label: 'Empty' }] }
+  const aRef = 'DSH_COST_METER_ACCOUNT_BALANCE_ACCOUNT_A1', bRef = 'DSH_COST_METER_ACCOUNT_BALANCE_ACCOUNT_B2'
+  const multiSecrets = { [aRef]: 'TEST-MULTI-A', [bRef]: 'TEST-MULTI-A', DEEPSEEK_BALANCE_API_KEY: 'TEST-MULTI-A' }
+  useHome('multiple-accounts', {}, null, {}, { queryAccounts: { balance: multiGroup } })
+  const multiple = mount({ secrets: multiSecrets, fetchBalance: async (_, init) => init.headers.authorization.endsWith('TEST-MULTI-ERROR') ? new Response('', { status: 401 }) : balanceResponse(12) })
+  let multipleState = (await multiple.service.refreshBalance()).state
+  assert.equal(multipleState.balanceAccounts.length, 1, 'default and named aliases of the same key show one account')
+  assert.equal(multipleState.balanceAccounts[0].id, 'account-a1', 'selected name wins when deduplicating')
+  assert.equal(multiple.requests.length, 1, 'aliases do not repeat the selected balance request')
+  multiSecrets[bRef] = 'TEST-MULTI-B'
+  multiple.emit('credentials/reference-updated', bRef)
+  multipleState = (await multiple.service.refreshBalance()).state
+  assert.equal(multipleState.balanceAccounts.length, 2, 'distinct keys remain separate even with identical balances')
+  assert.ok(multipleState.balanceAccounts.every(row => row.totalBalance === 12))
+  assert.ok(!JSON.stringify(multipleState.balanceAccounts).includes('TEST-MULTI'))
+  stateSchema.parse(multipleState)
+  const beforeRename = multiple.requests.length
+  multipleState = await multiple.service.updateConfig({ queryAccounts: { balance: { ...multiGroup, accounts: multiGroup.accounts.map(row => ({ ...row, label: row.id === 'account-a1' ? 'Work renamed' : row.label })) } } })
+  assert.equal(multipleState.balanceAccounts.find(row => row.id === 'account-a1').label, 'Work renamed')
+  assert.equal(multipleState.balanceAccounts.length, 2, 'renaming keeps the displayed balances')
+  assert.equal(multiple.requests.length, beforeRename, 'renaming does not query unchanged credentials')
+  multiSecrets[bRef] = 'TEST-MULTI-ERROR'
+  multiple.emit('credentials/reference-updated', bRef)
+  multipleState = (await multiple.service.refreshBalance()).state
+  assert.equal(multipleState.balanceAccounts.find(row => row.id === 'account-b2').status, 'error')
+  assert.equal(multipleState.balanceAccounts.find(row => row.id === 'account-a1').status, 'ok')
+  delete multiSecrets[bRef]
+  multiple.emit('credentials/reference-updated', bRef)
+  multipleState = (await multiple.service.refreshBalance()).state
+  assert.equal(multipleState.balanceAccounts.length, 1, 'cleared account disappears from balance rows')
+  await multiple.service.updateConfig({ queryAccounts: { balance: { ...multiGroup, accounts: [multiGroup.accounts[0]] } } })
+  multipleState = (await multiple.service.refreshBalance()).state
+  assert.equal(multipleState.balanceAccounts.length, 1)
+  assert.equal(multipleState.balance.totalBalance, 12)
+  await multiple.dispose()
+
+  useHome('slow-secondary-account', {}, null, {}, { queryAccounts: { balance: multiGroup } })
+  const secondaryGate = deferred(), secondaryEntered = deferred()
+  const slowSecondary = mount({ secrets: { [aRef]: 'TEST-MULTI-A', [bRef]: 'TEST-MULTI-B' },
+    fetchBalance: async (_, init) => { if (init.headers.authorization.endsWith('TEST-MULTI-B')) { secondaryEntered.resolve(); await secondaryGate.promise } return balanceResponse(12) } })
+  try {
+    const reading = slowSecondary.service.getState()
+    await startedWithin(reading)
+    const state = await reading
+    assert.equal(state.balance.status, 'ok')
+    await startedWithin(secondaryEntered.promise)
+  } finally { secondaryGate.resolve(); await slowSecondary.dispose() }
+
+  // Users can explicitly choose the signed-in wallet when a model key is rejected.
+  useHome('model-401-wallet-choice')
+  const rejectedModel = mount({ secrets: { DEEPSEEK_API_KEY: modelKey }, fetchBalance: async () => new Response('', { status: 401 }),
+    account: () => ({ status: 'ready', value: [cnyMain], bonusWallets: [] }) })
+  assert.equal((await rejectedModel.service.refreshBalance()).state.balance.status, 'error')
+  assert.equal(rejectedModel.accountCalls.length, 0, 'auto mode does not fall back after model-key 401')
+  await rejectedModel.service.updateConfig({ balance: { source: 'account' } })
+  assert.equal((await rejectedModel.service.refreshBalance()).state.balance.totalBalance, Number(cnyMain.balance))
+  assert.equal(rejectedModel.requests.length, 1, 'wallet choice stops using the rejected model key')
+  await rejectedModel.dispose()
+
+  useHome('explicit-account', {}, null, {}, { balance: { display: 'both', source: 'account' } })
+  const explicit = mount({ section: { baseURL: 'https://relay.example.com' }, secrets: { DEEPSEEK_API_KEY: modelKey },
+    account: () => ({ status: 'ready', value: [cnyMain], bonusWallets: [] }) })
+  assert.equal((await explicit.service.refreshBalance()).state.balance.currency, 'CNY', 'explicit wallet bypasses an existing model key and its route')
+  assert.equal(explicit.requests.length, 0)
+  const walletCalls = explicit.accountCalls.length
+  explicit.emit('credentials/reference-updated', 'DEEPSEEK_API_KEY')
+  await explicit.service.getState()
+  assert.equal(explicit.accountCalls.length, walletCalls, 'model key updates do not invalidate the chosen wallet')
+  await explicit.service.updateConfig({ balance: { source: 'auto' } })
+  assert.equal((await explicit.service.refreshBalance()).state.balance.status, 'off', 'switching back restores the model endpoint guard')
+  await explicit.service.updateConfig({ balance: { source: 'account' } })
+  assert.equal((await explicit.service.refreshBalance()).state.balance.totalBalance, Number(cnyMain.balance))
+  const explicitPath = join(process.env.DSH_HOME, 'storages/cost-meter/ledger.json')
+  await explicit.dispose()
+  assert.equal(JSON.parse(readFileSync(explicitPath, 'utf8')).config.balance.source, 'account', 'wallet choice survives disk persistence')
+  for (const [label, account] of [['absent', null], ['signed-out', () => null], ['failed', () => ({ status: 'failed' })]]) {
+    useHome('explicit-' + label, {}, null, {}, { balance: { display: 'both', source: 'account' } })
+    const unavailable = mount({ account, accountState: () => 'signed-out', secrets: { DEEPSEEK_API_KEY: modelKey } })
+    const missingWallet = await unavailable.service.refreshBalance()
+    assert.equal(missingWallet.ok, false)
+    assert.equal(missingWallet.state.balance.status, 'error', 'explicit wallet errors remain visible in the balance panel')
+    assert.equal(unavailable.requests.length, 0, 'explicit wallet failure never tries a model key')
+    await unavailable.dispose()
+  }
+
+  // A source switch cancels a pending model request and drops its late response.
+  useHome('switch-pending-wallet')
+  const sourceGate = deferred(), sourceEntered = deferred()
+  let sourceSignal
+  const switching = mount({ secrets: { DEEPSEEK_API_KEY: modelKey }, account: () => ({ status: 'ready', value: [cnyMain], bonusWallets: [] }),
+    fetchBalance: async (_, init) => { sourceSignal = init.signal; sourceEntered.resolve(); await sourceGate.promise; return balanceResponse(999) } })
+  const priorSource = switching.service.refreshBalance()
+  await startedWithin(sourceEntered.promise)
+  await switching.service.updateConfig({ balance: { source: 'account' } })
+  assert.equal(sourceSignal.aborted, true)
+  sourceGate.resolve(); await priorSource
+  assert.equal((await switching.service.refreshBalance()).state.balance.totalBalance, Number(cnyMain.balance))
+  await switching.dispose()
+
+  // Selected accounts and the dedicated Key remain independent of model-route changes.
+  for (const selected of ['default', 'wallet001']) {
+    const selectedRef = selected === 'default' ? 'DEEPSEEK_BALANCE_API_KEY' : 'DSH_COST_METER_ACCOUNT_BALANCE_WALLET001'
+    useHome('selected-balance-' + selected, {}, null, {}, { queryAccounts: { balance: { selected, accounts: [{ id: 'wallet001', label: 'Other wallet' }] } } })
+    const section = { apiKeyEnv: 'DEEPSEEK_API_KEY' }
+    const secrets = { DEEPSEEK_API_KEY: modelKey, DEEPSEEK_BALANCE_API_KEY: dedicatedKey, [selectedRef]: 'TEST_SELECTED_KEY' }
+    const selectedBalance = mount({ section, secrets, account: () => ({ status: 'ready', value: [cnyMain], bonusWallets: [] }) })
+    assert.equal((await selectedBalance.service.getState()).balance.status, 'ok')
+    assert.equal(selectedBalance.requests[0].headers.authorization, 'Bearer TEST_SELECTED_KEY')
+    section.baseURL = 'https://relay.example.com'
+    selectedBalance.emit('credentials/reference-updated', 'DEEPSEEK_API_KEY')
+    selectedBalance.emit('settings/document-updated', 'llm-deepseek', 1)
+    if (selected !== 'default') selectedBalance.emit('credentials/reference-updated', 'DEEPSEEK_BALANCE_API_KEY')
+    await selectedBalance.service.getState()
+    assert.equal(selectedBalance.requests.filter(row => row.headers.authorization === 'Bearer TEST_SELECTED_KEY').length, 1, 'model changes do not invalidate the selected balance source')
+    secrets[selectedRef] = 'TEST_SELECTED_KEY_REPLACED'
+    selectedBalance.emit('credentials/reference-updated', selectedRef)
+    assert.equal((await selectedBalance.service.getState()).balance.status, 'ok')
+    assert.ok(selectedBalance.requests.some(row => row.headers.authorization === 'Bearer TEST_SELECTED_KEY_REPLACED'))
+    delete secrets[selectedRef]
+    selectedBalance.emit('credentials/reference-updated', selectedRef)
+    assert.equal((await selectedBalance.service.getState()).balance.status, 'off')
+    assert.equal(selectedBalance.requests.filter(row => row.headers.authorization.startsWith('Bearer TEST_SELECTED_KEY')).length, 2, 'cleared selected keys are not queried again')
+    assert.equal(selectedBalance.accountCalls.length, 0)
+    await selectedBalance.dispose()
+  }
+
+  for (const selected of ['default', 'wallet001']) {
+    const ref = selected === 'default' ? 'DEEPSEEK_BALANCE_API_KEY' : 'DSH_COST_METER_ACCOUNT_BALANCE_WALLET001'
+    useHome('account-mode-key-' + selected, {}, null, {}, { balance: { display: 'both', source: 'account' }, queryAccounts: { balance: { selected, accounts: [{ id: 'wallet001', label: 'Other wallet' }] } } })
+    const pinned = mount({ secrets: { [ref]: dedicatedKey }, account: () => ({ status: 'ready', value: [cnyMain], bonusWallets: [] }) })
+    assert.equal((await pinned.service.refreshBalance()).state.balance.currency, 'USD')
+    assert.equal(pinned.requests.at(-1).headers.authorization, 'Bearer ' + dedicatedKey)
+    assert.equal(pinned.accountCalls.length, 0, 'explicit keys retain precedence in account mode')
+    await pinned.dispose()
+  }
+
+  for (const change of ['key', 'apiKeyEnv', 'baseURL']) {
+    useHome('pending-model-' + change)
+    const section = { apiKeyEnv: 'DEEPSEEK_API_KEY' }
+    const secrets = { DEEPSEEK_API_KEY: modelKey, DSH_DEEPSEEK_API_KEY: 'TEST_NEXT_MODEL_KEY' }
+    const gate = deferred(), entered = deferred()
+    let oldSignal
+    const pendingModel = mount({ section, secrets, fetchBalance: async (_, init) => {
+      if (init.headers.authorization === 'Bearer ' + modelKey) { oldSignal = init.signal; entered.resolve(); await gate.promise; return balanceResponse(100) }
+      return balanceResponse(10)
+    } })
+    const old = pendingModel.service.refreshBalance()
+    await startedWithin(entered.promise)
+    if (change === 'key') { secrets.DEEPSEEK_API_KEY = 'TEST_NEXT_MODEL_KEY'; pendingModel.emit('credentials/reference-updated', 'DEEPSEEK_API_KEY') }
+    else { section[change] = change === 'apiKeyEnv' ? 'DSH_DEEPSEEK_API_KEY' : 'https://relay.example.com'; pendingModel.emit('settings/document-updated', 'llm-deepseek', 1) }
+    assert.equal(oldSignal.aborted, true, 'source changes abort the old balance request')
+    const current = await pendingModel.service.getState()
+    assert.equal(current.balance.totalBalance, change === 'baseURL' ? 0 : 10)
+    gate.resolve(); await old
+    assert.equal((await pendingModel.service.getState()).balance.totalBalance, change === 'baseURL' ? 0 : 10, 'late responses cannot restore the old balance')
+    await pendingModel.dispose()
+  }
 
   // Runtime account changes invalidate warm caches, pending results and disk baselines.
   for (const event of ['credentials/record-updated', 'deepseek-account/signed-out', 'deepseek-account/session-expired']) {
@@ -252,7 +536,15 @@ try {
   await restart.dispose()
   assert.equal(JSON.parse(readFileSync(join(restartHome, 'storages', 'cost-meter', 'ledger.json'), 'utf8')).balanceRef, null, '重挂载无法确认旧账号身份时丢弃磁盘基准')
 
-  const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
+  useHome('restart-model-baseline', {}, { date: localDayKey(), total: 100, granted: 0, topped: 100, currency: 'USD', at: Date.now() - 1000 })
+  const restartModelHome = process.env.DSH_HOME
+  const restartModel = mount({ secrets: { DEEPSEEK_API_KEY: modelKey } })
+  result = await restartModel.service.refreshBalance()
+  assert.equal(result.state.balance.totalBalance, 3)
+  assert.equal(result.state.reconcile.ok, true, 'a restarted API-key-only profile rebuilds its account baseline')
+  await restartModel.dispose()
+  assert.equal(JSON.parse(readFileSync(join(restartModelHome, 'storages', 'cost-meter', 'ledger.json'), 'utf8')).balanceRef.total, 3)
+
   for (const late of ['ready', 'null', 'throw']) {
     useHome('pending-' + late)
     const gate = deferred()
@@ -262,7 +554,7 @@ try {
       started = true; await gate.promise
       if (late === 'throw') throw Error(sensitiveDetail)
       return late === 'null' ? null : { status: 'ready', value: [{ currency: 'CNY', balance: '100' }], bonusWallets: [] }
-    }, secrets: { DSH_DEEPSEEK_API_KEY: modelKey }, section: { apiKeyEnv: 'DSH_DEEPSEEK_API_KEY' } })
+    } })
     const old = pending.service.refreshBalance()
     for (let n = 0; n < 100 && !started; n++) await tick()
     assert.ok(started)
@@ -322,7 +614,7 @@ try {
     const replaced = mount({ proxyAccount: true, account: async () => {
       started = true; await gate.promise
       return late === 'null' ? null : { status: 'ready', value: [{ currency: 'CNY', balance: '100' }], bonusWallets: [] }
-    }, secrets: { DSH_DEEPSEEK_API_KEY: modelKey }, section: { apiKeyEnv: 'DSH_DEEPSEEK_API_KEY' } })
+    } })
     const previous = replaced.service.refreshBalance()
     for (let n = 0; n < 100 && !started; n++) await tick()
     assert.ok(started)
@@ -337,7 +629,7 @@ try {
   useHome('dispose-pending')
   const closingGate = deferred()
   let closingStarted = false
-  const closing = mount({ account: async () => { closingStarted = true; await closingGate.promise; return null }, secrets: { DSH_DEEPSEEK_API_KEY: modelKey }, section: { apiKeyEnv: 'DSH_DEEPSEEK_API_KEY' } })
+  const closing = mount({ account: async () => { closingStarted = true; await closingGate.promise; return null } })
   const closingRequest = closing.service.refreshBalance()
   for (let n = 0; n < 100 && !closingStarted; n++) await tick()
   assert.ok(closingStarted)
@@ -378,6 +670,22 @@ try {
   assert.equal(accountResult.state.reconcile.ok, true, '账号用量与官方余额变动接近时不再误报：¥10.08 对 ¥10，而非 ¥0.072 对 ¥10')
   assert.ok(Math.abs(accountResult.state.today.cost - 4.4) < 1e-12, '对账筛选不修改完整账本及第三方费用')
   stateSchema.parse(accountResult.state)
+  // 换余额显示币种只是展示设置:必须保留已取回的余额快照,否则余额行会消失到下次刷新。
+  const accountCallsBefore = reconciled.accountCalls.length
+  const revalued = await reconciled.service.updateConfig({ balance: { currency: 'GBP' } })
+  assert.equal(revalued.config.balance.currency, 'GBP')
+  assert.equal(revalued.balance.status, 'ok', '切换余额显示币种保留已取回的余额')
+  assert.equal(revalued.balance.totalBalance, 90)
+  await new Promise(done => setImmediate(done))
+  assert.equal(reconciled.accountCalls.length, accountCallsBefore, '切换余额显示币种不触发重新查询余额')
+  // 同类的展示/核对开关(官方渠道过滤、点击隐藏、对账)也不改变查询内容,不能清空快照。
+  for (const [patch, label] of [[{ officialChannelOnly: true }, '官方渠道过滤'], [{ quickHide: true }, '点击隐藏'], [{ reconcile: false }, '对账开关']]) {
+    const toggled = await reconciled.service.updateConfig({ balance: patch })
+    assert.equal(toggled.balance.status, 'ok', `${label}保留已取回的余额`)
+    assert.equal(toggled.balance.totalBalance, 90)
+    await new Promise(done => setImmediate(done))
+    assert.equal(reconciled.accountCalls.length, accountCallsBefore, `${label}不触发重新查询余额`)
+  }
   await reconciled.dispose()
 
   // Execute the actual client components against a failed RPC snapshot in both languages.

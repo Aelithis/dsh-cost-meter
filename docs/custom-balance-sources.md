@@ -1,4 +1,148 @@
-# 自定义余额：随机端口、局域网与 WorkBuddy2API
+# 自定义余额配置
+
+[English](custom-balance-sources.en.md) · [功能与截图](features.md)
+
+## 请求与响应配置
+
+**POST 携带 JSON 请求体：**进入**设置 → 费用 → 额度**，展开自定义余额，选择 **POST**，在**请求体 (JSON)** 中填写接口要求的内容。例如接口需要账号参数，并返回 `{"data":{"balance":12.5}}`：
+
+```json
+{"account_id":"example-account","include_credit":true}
+```
+
+把**解析规则 (JSON)** 设为 `{"remaining":"data.balance"}`。有效 JSON 按原文独立保存并发送，保留嵌套值和大整数 ID；格式错误会显示提示，保留上一次有效配置。清空编辑框后不再发送请求体；切换 GET/HEAD 不发送请求体，切回 POST 时保留原内容。未配置 Content-Type 时自动使用 `application/json`，手动请求头不区分大小写。
+
+兼容已有 `request.body` 对象和原始字符串。请求体属于普通持久化配置，`{{VAR}}` 凭据替换只用于请求头；使用请求头认证时，可填写 `{"Authorization":"Bearer {{MY_API_KEY}}"}`，并通过下方凭据输入框设置密钥。
+
+**按显示币种折算：**进入**设置 → 费用 → 额度**，展开一条自定义余额配置，开启**按显示币种折算（USD 余额）**。每条配置默认关闭；“余额原币种”仍应填写端点实际返回的币种。例如原余额为 USD 54.3792，显示币种为 CNY、汇率为 7.2、精度为两位小数时，显示 **¥391.53**。侧栏、设置页与悬停明细中的已用金额、接口上限和手动上限一起折算；进度比例和原始余额不变。手动上限按原币种输入。对应持久化字段为该 `customBalances[]` 条目的 `convertToDisplayCurrency: true`，也兼容旧 `customBalance` 配置。
+
+全局汇率表示**美元到显示币种**的换算。原币种为 CNY/EUR 或积分时保留原单位，开关不可用；阿里云余额以接口返回币种为准。切换开关不查询汇率、不额外请求余额，关闭后立即恢复原币种。
+
+**余额显示币种（官方与自定义共用）：**在**设置 → 费用 → 显示 → 侧栏 → 官方余额 → 余额显示币种**可选择**原币种**（默认）、**跟随显示币种**或币种目录中的任一代码。选定后官方余额、已赠送/已充值、自定义余额的剩余与已用金额都会按当前每日参考汇率换算展示；金额使用币种目录中的符号显示（如 `£7.5`）。缺口径的代码（目录外或缺少汇率）保持原币种，避免符号与数值错配。选中非“原币种”时，上文的每条“按显示币种折算（USD 余额）”开关不再生效；预算上限与进度比例仍按余额记账币种计算（金额随所选币种换算展示），原始快照不变。切换只改展示，不查询汇率、不额外请求余额、保留已取回的余额快照，也不改动账本。
+
+千问 / 阿里云资金账户余额可直接点击「添加千问 / 阿里云余额」，使用 RAM AccessKey 签名查询，显示接口返回的可用金与币种；配置步骤、所需权限及口径见[千问余额说明](qianwen-balance.md)。
+
+千问 Token Plan 可在卡片内选择[官方 CLI 订阅额度](qwen-cli-quota.md)，需在 DSH 主机以同一系统账号安装 CLI 并运行 `qianwen auth login`。默认保留本地估算；CLI 模式显示账号当前 Credits，不修改本地账本。
+
+千问 Token Plan 的本地 Credits 统计归属千问套餐的 Plan 调用。保留 `qwen`、`qwen-tokenplan` 等订阅别名，自定义渠道也可在「按模型统计 → 计费方式」选择千问套餐，或使用明确的厂商名与套餐特征自动识别。显式 API 调用不计；`qianwen` 按量渠道不会仅因同名模型自动归入。模型不在抵扣表中时需补充三项费率。
+
+百度千帆 Token Plan 个人版现已支持[通过控制台 Cookie 查询额度](baidu-token-plan.md)，分别显示积分制和 Token 制用量。在百度额度卡片保存 Cookie，或在 DSH 主机配置 `BAIDU_QIANFAN_COOKIE`。
+
+小米 MiMo Token Plan 的额度查询使用**控制台 Cookie**(而非 API Key):登录 `platform.xiaomimimo.com` 后按 F12 →「网络」→ 找到 `balanceAlertConfig` 请求,把请求头 `cookie` 整段粘贴进「设置 → 费用 → 额度」的 MiMo 卡片(需含 `serviceToken` 与 `userId`,DSH 凭据库以 `MIMO_COOKIE` 托管)。卡片显示套餐/补偿积分窗口与周期截止重置(北京时间)及余额行。控制台 Cookie 过期后，按卡片提示重新复制。此控制台查询不接受 Token Plan 推理专用 Key(`tp-*` / `ttp-*`)。本地套餐统计按自然月汇总；补偿积分和余额只展示查询结果，不用无法区分归属的本地调用估算。
+
+CLIProxyAPI 网关来源卡片可勾选「只显示 Gemini 额度」，仅影响该来源的 Antigravity 分组。默认显示全部分组；过滤后无可见额度时显示空列表，解析错误仍单独报告。
+
+自定义 Provider 余额的 `extract` 规则支持数字常量、点路径、加减乘除、嵌套运算、`expression` 算式与 `sum` 数组汇总，示例见下方“复杂计算与订阅余额”。**`divide` 适用于 NewApi 等以 quota 整数计量的端点**(1 USD = 500000 quota,与 cc-switch 同款换算)。
+
+- **`unit: "CREDITS"`**：非货币计数端点可选 `CREDITS`，按小数精度设置显示并标明 Credits。美元花费不转换为积分，也不显示由它推算的今日积分消耗；进度条仅使用接口返回的积分上限，全局货币预算不适用。
+- **本机回环端点支持明文 HTTP**:端点主机为 `127.0.0.1` / `localhost` / `[::1]` 时允许 `http://`(流量不出网卡),用于只监听回环、不提供 TLS 的本地只读路由(如 `dsh-workbuddy-connect` 的 `/plugins/dsh-workbuddy-connect/status`)。局域网 HTTP 需显式启用 `allowInsecureHttp`，并在 `allowedHosts` 填写精确的 `host:port`，见下方说明。
+
+### WorkBuddy 积分示例(本机插件路由)
+
+“费用 → 额度”的 **WorkBuddy 积分** 卡现已支持 dsh-xdpool。多个连接插件同时使用时，可将“积分来源”选为 dsh-xdpool；支持国内／国际池的当前、全部或勾选账号。详见[适配说明](update-notes-1.9.38.md#中文)。
+
+已安装 `dsh-workbuddy-connect` 时,其 Web 状态路由直接返回聚合积分,无需复制任何凭据:
+
+```json
+{
+  "enabled": true,
+  "display": "sidebar",
+  "refreshMinutes": 15,
+  "label": "WorkBuddy 积分",
+  "labelEn": "WorkBuddy Credits",
+  "unit": "CREDITS",
+  "request": { "url": "http://127.0.0.1:3080/plugins/dsh-workbuddy-connect/status", "method": "GET", "headers": {} },
+  "extract": { "remaining": "credits.total" }
+}
+```
+
+端口和响应字段按实际本机服务调整。该示例要求对应插件已提供此路由；本插件拒绝跟随重定向，现有凭据主机白名单继续生效。
+
+以 NewApi 的 `GET /api/usage/token` 为例(响应 `{ "code": 200, "data": { "total_granted": ..., "total_used": ..., "total_available": ..., "unlimited_quota": false } }`):
+
+```json
+{
+  "enabled": true,
+  "display": "both",
+  "refreshMinutes": 15,
+  "label": "NewApi",
+  "labelEn": "NewApi",
+  "unit": "USD",
+  "request": {
+    "url": "https://你的NewApi域名/api/usage/token",
+    "method": "GET",
+    "headers": { "Authorization": "Bearer {{NEWAPI_API_KEY}}" }
+  },
+  "extract": {
+    "remaining": { "op": "divide", "path": "data.total_available", "by": 500000 },
+    "maxBudget": { "op": "divide", "path": "data.total_granted", "by": 500000 },
+    "spend": { "op": "divide", "path": "data.total_used", "by": 500000 },
+    "unit": "USD"
+  }
+}
+```
+
+- `{{NEWAPI_API_KEY}}` 从 DSH 凭据库或环境变量解析(**仅请求头支持占位符**,URL 不支持占位符，可填完整地址或以单斜杠开头的宿主相对路径);
+- 无限额度 token(`unlimited_quota: true`)没有 `total_available`,无法提取 `remaining`,查询会报「remaining is missing or not numeric」——请改用有限额度 token,或在中间层端点换算;
+- 配置入口:设置 → 费用(额度标签)→「自定义 Provider 余额」展开配置;或直接改 `storages/cost-meter/ledger.json` 的 `config.customBalance`。
+
+### 凭据与安全
+
+- **变量名命名规则**:`{{VAR_NAME}}` 的参考格式为 `<ROUTE>_API_KEY`——`<ROUTE>` 对应 DSH 模型配置页(设置 → 模型)里的 Provider ID,把 ID 大写、非字母数字字符替换为下划线,例如 `openai`→`{{OPENAI_API_KEY}}`、`anthropic`→`{{ANTHROPIC_API_KEY}}`、`abc23-d`→`{{ABC23_D_API_KEY}}`。与模型页共用同一变量名,自定义余额查询与模型调用即**共用同一把密钥**(都从 DSH 凭据库解析)。该说明也展示在设置页「请求头 (JSON)」输入框上方。
+- **凭据输入框**:展开条目配置后,「凭据输入」区会为请求头里出现的每个 `{{VAR}}` 占位符显示一行 write-only 输入框,密钥直接存入 DSH 凭据库（不写入插件配置和账本，不回显）,无需再手改环境变量或凭据文件。
+- **明文密钥自动迁移**:旧版本把 `Bearer sk-…` 明文写在请求头里时会明文落盘;插件在启动时自动把这类明文导入 DSH 凭据库,并把头值替换为 `{{CUSTOM_BALANCE_KEY_…}}` 占位符(名称由条目 host + 头名派生,跨重启稳定),功能不受影响。此后 `ledger.json` 与下发给浏览器的配置**永不包含明文密钥**——疑似密钥头(Authorization / X-Api-Key / Bearer / sk- 前缀 / 长不透明串)一律置空,占位符与普通头照常保留。
+- **凭据白名单 `allowedHosts`**:请求头携带密钥(占位符或明文)时,出站主机必须命中该白名单,否则直接拒绝——用于防止「导入他人配置」导致密钥外带。未配置白名单时放行并在日志警告一次。设置页条目面板内有「凭据白名单主机」输入框(逗号分隔)。
+- **混合凭据模板**：同一头值同时含静态密钥与动态占位符时，不能自动整体迁移为嵌套凭据。插件提示待处理并阻止该值落盘、下发；请将静态部分另存为凭据，改用纯引用组合。正常的 `Bearer {{VAR}}` 或 `{{USER}}:{{PASS}}` 保留。
+
+
+
+## 复杂计算与订阅余额
+
+1.9.47 起，“费用 → 额度 → 自定义余额 → 解析规则 (JSON)”支持 `expression` 算式和嵌套运算。`remaining` 是剩余额度，`spend` 是已用量，`maxBudget` 是总额度；不能把接口的已用量字段直接填到 `remaining`。
+
+例如接口返回 `{"data":{"amount_total":15000000,"amount_used":2500000}}`，且该站点使用 500000 额度单位折合 1 美元时，可以填写：
+
+```json
+{
+  "remaining": {"expression": "(data.amount_total - data.amount_used) / 500000"},
+  "spend": {"expression": "data.amount_used / 500000"},
+  "maxBudget": {"expression": "data.amount_total / 500000"}
+}
+```
+
+本例显示余额 25 美元、已用 5 美元、总额 30 美元。字段路径和换算比例按站点实际响应修改。NewAPI 的订阅对象使用 `amount_total` 和 `amount_used`，响应外层与账户余额接口有所不同，不能直接套用另一个接口的路径。[上游字段定义](https://github.com/QuantumNous/new-api/blob/main/web/src/features/subscriptions/types.ts)
+
+如果响应的 `data.subscriptions` 是订阅数组，且每项包含 `subscription.amount_total`、`subscription.amount_used`，可先逐项计算再求和：
+
+```json
+{
+  "remaining": {
+    "op": "sum",
+    "path": "data.subscriptions",
+    "value": {"expression": "(subscription.amount_total - subscription.amount_used) / 500000"}
+  },
+  "spend": {
+    "op": "sum",
+    "path": "data.subscriptions",
+    "value": {"expression": "subscription.amount_used / 500000"}
+  },
+  "maxBudget": {
+    "op": "sum",
+    "path": "data.subscriptions",
+    "value": {"expression": "subscription.amount_total / 500000"}
+  }
+}
+```
+
+数组须对应要展示的有效订阅。已有“路径”“常量”“add/subtract 的 paths”和“divide 的 path/by”规则继续使用；新规则用 `args` 嵌套，例如：
+
+```json
+{"remaining":{"op":"divide","args":[{"op":"subtract","args":["data.amount_total","data.amount_used"]},500000]}}
+```
+
+算式支持 `+ - * / % **`、括号、数组下标，以及 `min`、`max`、`abs`、`round`、`floor`、`ceil`。不运行 JavaScript。字段缺失、非数值、除零和非有限结果会报告解析失败，不会显示为余额 0。
+
+`sum` 还支持可选的 `where` 对象：只有所有指定字段都与给定值精确相等的数组项才会参与求和，例如 `{"op":"sum","path":"data","where":{"provider":"workbuddy"},"value":{"expression":"windows[2].limit"}}`。`where` 最多 16 个字段，键名不能是 `__proto__` / `prototype` / `constructor`。
 
 ## 侧栏跳转链接
 
@@ -65,10 +209,32 @@ HTTPS 和本机回环 HTTP 继续可用。访问 `http://192.168.1.20:8790` 等�
 
 贡献来源：@Jav1es 在 [#311](https://github.com/Han-1413141/dsh-cost-meter/issues/311) 提供随机端口复现及相对路径建议；@snhun 在 [#309](https://github.com/Han-1413141/dsh-cost-meter/issues/309) 提出局域网 HTTP 需求，在 [#310](https://github.com/Han-1413141/dsh-cost-meter/issues/310) 提出 WorkBuddy2API 接入需求。
 
-## English setup
+## Magpie WorkBuddy 积分示例
 
-Each custom balance entry has an optional **Dashboard link** (`dashboardUrl`) under **Cost → Quotas**. Use a complete HTTP(S) account or billing URL without embedded credentials. The sidebar row and progress card show an arrow next to that entry's name; it opens a new tab without refreshing the balance. Leave it blank to omit the link. Query URLs, headers and credentials are never used to construct navigation links.
+在 **费用 → 额度 → 自定义 Provider 余额** 点击「添加配置」，填入：
 
-Root-relative URLs such as `/plugins/dsh-workbuddy-connect/status` follow the running DSH web server's actual port. Independent WorkBuddy2API deployments use an absolute URL. Non-loopback HTTP requires both `allowInsecureHttp: true` and an exact `host:port` in `allowedHosts`; this explicitly permits plaintext transport. Redirects remain blocked.
+```json
+{
+  "label": "Magpie WorkBuddy 积分",
+  "unit": "CREDITS",
+  "refreshMinutes": 5,
+  "request": {
+    "url": "http://127.0.0.1:3425/v1/magpie/quotas",
+    "method": "GET",
+    "headers": {}
+  },
+  "extract": {
+    "remaining": { "op": "sum", "path": "data", "where": { "provider": "workbuddy" }, "value": { "expression": "windows[2].limit * windows[2].remaining / 100" } },
+    "maxBudget": { "op": "sum", "path": "data", "where": { "provider": "workbuddy" }, "value": { "expression": "windows[2].limit" } },
+    "spend": { "op": "sum", "path": "data", "where": { "provider": "workbuddy" }, "value": { "expression": "windows[2].limit * windows[2].used / 100" } }
+  },
+  "allowedHosts": ["127.0.0.1:3425"],
+  "allowInsecureHttp": false
+}
+```
 
-The **+ WorkBuddy2API credits** preset reads `GET /api/credits/expiry?package_limit=1` with an admin `X-Admin-Token` stored as `WORKBUDDY2API_ADMIN_TOKEN` in DSH credentials. Set the real server address and matching allowlist, update expired admin tokens, then enable the card. The displayed `summary.available_remaining` is the active account pool's available credits, not currency, a single model API key's allowance, or the incomplete expiry snapshot total. No model request or upstream credit-refresh task is triggered. Authentication was tested with synthetic responses, not a live account.
+Magpie 的 `/v1/magpie/quotas` 会返回多个 provider 和多个账号；`sum` 规则里的 `where` 按字段精确筛选，只汇总 `provider=workbuddy` 的账号，不会把 Trae、MiniMax 等其他账号的额度加进来。每个 WorkBuddy 账号的 `used` / `remaining` 是百分比（0–100），`limit` 是积分总量，因此示例用 `limit * percentage / 100` 换算成绝对积分，并取 `windows[2]`（`Total credits`，即基础额度 + 额外额度）作为总积分口径。若只想看基础月度额度，把三处 `windows[2]` 改为 `windows[0]`；只看额外积分改为 `windows[1]`。
+
+Magpie 在本机运行（默认 `127.0.0.1:3425`）时无需 API Key；若 Magpie 在其它主机或开启了鉴权，请把 URL 改成实际地址，在请求头加入 `Authorization: Bearer {{MAGPIE_API_KEY}}`，在白名单填写准确的 `主机:端口`，然后在凭据输入框保存该密钥。优先使用 HTTPS；只有访问非回环 HTTP 地址时才勾选「允许非回环 HTTP」。查询只读取 Magpie 已有统计，不发模型请求。
+
+该预设不依赖官方 WorkBuddy 桌面登录或 WorkBuddy 连接插件；已经安装 `dsh-magpie-quota` 的用户也可以继续使用那个插件，二者展示互不影响。

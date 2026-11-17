@@ -1,6 +1,8 @@
 # 模型与 Plan 适配说明
 
-更新时间:2026-10-15
+更新时间:2026-10-28
+
+[10 月 28 日更新](catalog-2026-10-28.md)补入 Kimi K3.1 Pro / Highspeed、MiniMax M3.1 Flash 和新套餐；套餐名称、模型及来源见 [套餐目录](subscription-catalog.json)。
 
 当前按渠道区分的目录、完整覆盖范围、历史宿主兼容和限制见 [2026-10 价格说明](provider-pricing-2026-10.md)。
 
@@ -48,7 +50,7 @@
 
 ### 3. 内置价格目录(170+ 模型 ID)
 
-内置只读目录按 **厂商 → 模型家族** 分类，包含 18 个第三方厂商/渠道键及独立 DeepSeek 主表:
+内置只读目录按 **厂商 → 模型家族** 分类，包含 20 个第三方厂商/渠道键及独立 DeepSeek 主表:
 
 | 厂商 | 代表模型 |
 |---|---|
@@ -58,12 +60,12 @@
 | Google | Gemini 4 Argon、3.8/3.7/3.6/3.5 Flash、3.5 Flash Lite、3.1 Pro、3 Flash、2.5 全系 |
 | xAI | Grok 4.6/4.5/4.3、Grok Build |
 | Z.ai/智谱 | GLM-5.3/Flash、5.2/5.1、4.x |
-| 阿里 Qwen | Qwen3.8 Max、3.7、3.6、3.5 Plus |
-| Kimi/Moonshot | K3、K2.7 Code、K2.6、K2.5 |
-| MiniMax | M3、M2.7、M2.5 |
+| 阿里 Qwen | Qwen3.8 Max / Flash、3.7、3.6、3.5 Plus |
+| Kimi/Moonshot | K3.1 Pro / Highspeed、K3、K2.7 Code、K2.6及 Kimi Code 模型 ID |
+| MiniMax | M3.1 Flash、M3、M2.7、M2.5 |
 | 小米 MiMo | V2.6(Pro / Flash / Pro UltraSpeed)、V2.5(+Pro,官方标注即将下线) |
-| 腾讯混元 | Hy3 |
-| OpenRouter / Mistral / NVIDIA / Upstage | 常用模型 |
+| 腾讯混元 | Hy4 preview、Hy3 |
+| OpenRouter / Mistral / NVIDIA / Upstage | 常用模型；Mistral 另含其转售的 `zai-glm-5-3-flash`、`deepseek-v4-1-flash-1017`（按 Mistral 价格计费） |
 | **OpenCode Go(订阅)** | 订阅模型的本渠道参考单价，含 Go 自己的 DeepSeek 峰谷档 |
 
 价格来源:以各厂直接 API 官方定价页与 **OpenCode Zen/Go 各自渠道价目** 分别核对（同名模型的渠道价可能不同）;无法确认完整计费规则的（如直接 API GPT-5.5 Pro）标 `unpriced`,**不编造价格**。机器可读副本见 [`provider-pricing.json`](./provider-pricing.json)(由代码自动生成)。

@@ -5,6 +5,49 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const { createElement: el, useState } = React
     const Fragment = React.Fragment
+    // 展示币种目录:与 lib/currency-catalog.js 同一张表,test/currency-catalog.mjs
+    // 断言两边一致。[代码, 符号, 兜底汇率],顺序即选择器顺序;小数位属于用户的
+    // 显示精度偏好,切换币种时保持不变,所以不在目录里。
+    const CURRENCY_CATALOG = [
+      ['CNY', '¥', 7.2], ['USD', '$', 1], ['EUR', '€', 0.92], ['GBP', '£', 0.75605],
+      ['JPY', 'JP¥', 160], ['KRW', '₩', 1337.13], ['INR', '₹', 94.24], ['HKD', 'HK$', 7.846],
+      ['SGD', 'S$', 1.2881], ['AUD', 'A$', 1.4738], ['CAD', 'C$', 1.4258], ['CHF', 'CHF', 0.8384],
+      ['NZD', 'NZ$', 1.8076], ['BRL', 'R$', 5.6637], ['MXN', 'MX$', 18.5931], ['ZAR', 'R', 16.9635],
+      ['TRY', '₺', 50.368], ['SEK', 'kr', 10.0502], ['NOK', 'NKr', 9.5634], ['DKK', 'Dkr', 6.764],
+      ['PLN', 'zł', 3.9914], ['THB', '฿', 33.915], ['IDR', 'Rp', 18244], ['MYR', 'RM', 4.0875],
+      ['PHP', '₱', 63.813], ['ILS', '₪', 3.2107],
+    ]
+    const CURRENCY_ENTRIES = Object.fromEntries(CURRENCY_CATALOG.map(([code, symbol, rate]) => [code, { symbol, rate }]))
+    const CURRENCY_NAMES = {
+      CNY: ['人民币', 'Chinese Yuan'], USD: ['美元', 'US Dollar'], EUR: ['欧元', 'Euro'], GBP: ['英镑', 'British Pound'],
+      JPY: ['日元', 'Japanese Yen'], KRW: ['韩元', 'Korean Won'], INR: ['印度卢比', 'Indian Rupee'], HKD: ['港币', 'Hong Kong Dollar'],
+      SGD: ['新加坡元', 'Singapore Dollar'], AUD: ['澳元', 'Australian Dollar'], CAD: ['加元', 'Canadian Dollar'], CHF: ['瑞士法郎', 'Swiss Franc'],
+      NZD: ['新西兰元', 'New Zealand Dollar'], BRL: ['巴西雷亚尔', 'Brazilian Real'], MXN: ['墨西哥比索', 'Mexican Peso'], ZAR: ['南非兰特', 'South African Rand'],
+      TRY: ['土耳其里拉', 'Turkish Lira'], SEK: ['瑞典克朗', 'Swedish Krona'], NOK: ['挪威克朗', 'Norwegian Krone'], DKK: ['丹麦克朗', 'Danish Krone'],
+      PLN: ['波兰兹罗提', 'Polish Zloty'], THB: ['泰铢', 'Thai Baht'], IDR: ['印尼盾', 'Indonesian Rupiah'], MYR: ['马来西亚林吉特', 'Malaysian Ringgit'],
+      PHP: ['菲律宾比索', 'Philippine Peso'], ILS: ['以色列谢克尔', 'Israeli Shekel'],
+    }
+    function currencyLabel(code, text) {
+      const names = CURRENCY_NAMES[code]
+      return (names ? text(names[0], names[1]) + ' · ' : '') + code
+    }
+    /** 选择器选项;当前值不在目录里时(升级前的自定义符号)补一条,下拉框不能显示错值。 */
+    function currencyChoices(config, text) {
+      const choices = CURRENCY_CATALOG.map(([code]) => [code, currencyLabel(code, text)])
+      const current = config?.currency
+      if (typeof current === 'string' && current.length > 0 && CURRENCY_ENTRIES[current] === undefined) {
+        const symbol = typeof config?.symbol === 'string' && config.symbol.length > 0 ? ' · ' + config.symbol : ''
+        choices.unshift([current, current + symbol])
+      }
+      return choices
+    }
+    /** 换币种时符号与参考汇率一起换;小数位是用户的显示精度偏好,保持不变。 */
+    function currencyPatch(code, config) {
+      const entry = CURRENCY_ENTRIES[code]
+      if (entry === undefined) return null
+      const rate = config?.exchangeRateAuto !== false ? config?.fxRates?.[code] ?? entry.rate : entry.rate
+      return { currency: code, symbol: entry.symbol, exchangeRate: rate }
+    }
     /* DISPLAY_NATIVE_SOURCE */
     const fallbackNative = displayNativeFallback(React)
     let hostNative = {}
@@ -39,9 +82,11 @@ window.__ModuleLoader__.load({
       const previewData = React.useMemo(() => displayPreviewData(props.state, config, examples, selected, selectedPlan), [props.state, config, examples, selected, selectedPlan])
       const renderPreviewSidebar = React.useCallback(preview => renderSidebar(preview, previewData.state), [renderSidebar, previewData.state])
       const appearance = useDisplayAppearance()
-      const labels = { balance: text('官方余额', 'Official balance'), budget: text('侧栏预算', 'Sidebar budget'), today: text('今日用量', 'Today’s usage'), peak: text('峰谷时段', 'Peak / off-peak'), models: text('模型花费', 'Model costs'), go: text('Go 额度', 'Go quota'), plan: text('套餐进度条', 'Plan bars'), customBalance: text('自定义余额', 'Custom balance'), codex: text('Codex 额度', 'Codex quota'), badge: text('会话费用摘要', 'Session cost summary'), 'session-header': text('顶部费用明细', 'Header cost details'), 'session-dock': text('输入框下方费用明细', 'Composer cost details'), turn: text('每轮费用', 'Per-turn cost'), corner: text('右下角额度', 'Corner quota'), 'strip-budget': text('预算进度条', 'Budget strip'), 'strip-go': text('Go 进度条', 'Go strip'), 'strip-plans': text('套餐进度条', 'Plan strip') }
+      const labels = { balance: text('官方余额', 'Official balance'), budget: text('侧栏预算', 'Sidebar budget'), today: text('今日用量', 'Today’s usage'), peak: text('峰谷时段', 'Peak / off-peak'), models: text('模型花费', 'Model costs'), go: text('Go 额度', 'Go quota'), plan: text('套餐进度条', 'Plan bars'), customBalance: text('自定义余额', 'Custom balance'), codex: text('Codex 额度', 'Codex quota'), 'session-header': text('顶部费用明细', 'Header cost details'), 'dock-cost': text('输入框下方费用入口', 'Composer cost entry'), turn: text('每轮费用', 'Per-turn cost'), corner: text('右下角额度', 'Corner quota'), 'strip-budget': text('预算进度条', 'Budget strip'), 'strip-go': text('Go 进度条', 'Go strip'), 'strip-plans': text('套餐进度条', 'Plan strip') }
+      labels.badge = text('会话费用摘要', 'Session cost summary')
       labels['strip-codex'] = text('Codex 额度', 'Codex quota')
       labels.sessionList = text('会话列表金额', 'Session list amounts')
+      labels.localSavings = text('本地节省', 'Local savings')
       const registry = {}
       const id = React.useId(), dialogRef = React.useRef(null), expandButton = React.useRef(null)
       React.useEffect(() => {
@@ -55,7 +100,6 @@ window.__ModuleLoader__.load({
       const budgetPercent = percent(Number(previewData.state.budgetUsed) * (Number(config.exchangeRate) || 1), Number(previewData.config.budget?.amount))
       const goPercent = previewData.state.goQuota?.rolling?.percent ?? null
       const planPercent = Object.values(previewData.state.codingPlans ?? {}).flatMap(plan => Object.values(plan.windows ?? {})).find(win => Number.isFinite(win?.percent))?.percent ?? null
-      const percentLabel = value => value === null ? '—' : Number(value.toFixed(1)) + '%'
       const inner = (key, on, ...children) => el(key.startsWith('corner-') ? 'div' : 'span', { className: 'cm-preview-part', 'data-display-part': key, 'data-preview-hidden': !on }, ...children)
       const set = patch => setDraft(previous => ({ ...(previous ?? config), ...patch }))
 
@@ -89,7 +133,9 @@ window.__ModuleLoader__.load({
       registry.customBalance = { on: ['both', 'sidebar'].includes(config.customBalance?.display ?? 'both'), patch: { customBalance: { ...config.customBalance, display: ['both', 'sidebar'].includes(config.customBalance?.display ?? 'both') ? 'settings' : 'both' } } }
       registry.codex = { on: config.codexQuotaEnabled === true && config.codexQuotaSidebar !== false, patch: config.codexQuotaEnabled === true && config.codexQuotaSidebar !== false ? { codexQuotaSidebar: false } : { codexQuotaEnabled: true, codexQuotaSidebar: true } }
       registry.sessionList = { on: config.sessionListCosts === true, patch: { sessionListCosts: config.sessionListCosts !== true } }
+      registry.localSavings = { on: config.localSavings?.enabled === true, patch: { localSavings: { ...config.localSavings, enabled: config.localSavings?.enabled !== true } } }
       const strip = config.quotaStrip ?? {}
+      const planAmount = examples ? '$1.0000' : Object.values(previewData.state.codingPlans ?? {}).flatMap(plan => Object.values(plan.windows ?? {})).find(win => win?.percent == null && typeof win?.text === 'string')?.text
       const codex = previewData.state.displayPreviewCodex
       const codexPercentages = codex?.status === 'ok' ? Object.entries(codex.windows ?? {}).map(([key, win]) => ({ key, pct: Number.isFinite(win?.percent) ? Math.max(0, Math.min(100, 100 - win.percent)) : null })) : []
       const codexStrip = item('strip-codex', text('输入框上方 · Codex 额度', 'Above composer · Codex quota'),
@@ -103,17 +149,30 @@ window.__ModuleLoader__.load({
         const on = strip.enabled === true && strip[key] !== false
         // Enabling one item from a disabled strip must not show its siblings unexpectedly.
         const next = strip.enabled ? { ...strip, [key]: !on } : { ...strip, budget: false, go: false, plans: false, [key]: true }
-        const pct = value === null ? null : (config.barDirections?.[kind] ?? 'used') === 'remaining' ? 100 - value : value
+        const remaining = config.barDirections?.[kind] === 'remaining'
+        const pct = value === null ? null : remaining ? 100 - value : value
         return item('strip-' + key, text('输入框上方 · ', 'Above composer · ') + label, on, { quotaStrip: { ...next, enabled: true, promptSeen: true }, ...(strip.enabled ? {} : { codexQuotaStrip: false }) },
           el('span', { className: 'cm-qchip' }, el('span', { className: 'cm-qlabel' }, label),
-            el('span', { className: 'cm-qbar' }, el('span', { className: 'cm-qfill', style: { width: (pct ?? 0) + '%' } })), el('span', { className: 'cm-qtext' }, percentLabel(pct))))
+            el('span', { className: 'cm-qbar' }, el('span', { className: 'cm-qfill', style: { width: (pct ?? 0) + '%' } })), el('span', { className: 'cm-qtext' }, pct === null ? '—' : t(remaining ? 'quotaRemaining' : 'quotaUsed', { pct: Number(pct.toFixed(1)) })),
+            key === 'plans' && strip.planAmounts !== false && planAmount ? el('span', { className: 'cm-qtext' }, planAmount) : null))
       }
-      const session = position => item('session-' + position, text(position === 'header' ? '顶部费用明细' : '输入框下方费用明细', position === 'header' ? 'Header cost details' : 'Composer cost details'), config[position === 'header' ? 'hideSessionCostHeader' : 'hideSessionCostDock'] !== true,
-        { [position === 'header' ? 'hideSessionCostHeader' : 'hideSessionCostDock']: config[position === 'header' ? 'hideSessionCostHeader' : 'hideSessionCostDock'] !== true },
-        el('span', { className: 'cm-btn cm-stat-entry' }, text('费用明细', 'Cost details')))
-      const badge = position => item('badge', text('会话费用摘要', 'Session cost summary'), config.position === position, { position: config.position === position ? 'off' : position },
-          el('span', { className: 'cm-root cm-session-cost' }, el('span', { className: 'cm-session-amount' }, t('sessionLineCompact', { amount: examples ? money(.32) : '—' })),
-            inner('session-detail', config.sessionCostCompact !== true, el('span', { className: 'cm-session-detail' }, examples ? text(' · 输入 128K · 输出 4K', ' · In 128K · Out 4K') : text(' · 暂无会话缓存', ' · No cached session data')))))
+      const sessionHeader = region === 'conversation' ? item('session-header', labels['session-header'], config.hideSessionCostHeader !== true,
+        { hideSessionCostHeader: config.hideSessionCostHeader !== true },
+        el('span', { className: 'cm-btn cm-stat-entry' }, text('费用明细', 'Cost details'))) : null
+      const dockVisible = config.position === 'dock' && config.hideSessionCostDock !== true
+      // 输入区费用入口与实际金额行使用相同的货币位置。
+      const dockAmountText = t('sessionLineCompact', { amount: examples ? money(.32) : '—' })
+      const dockDetail = examples
+        ? text(' · 命中 60.0% · 输入 128K · 缓存 13M · 输出 4K', ' · Hit 60.0% · Input 128K · Cache 13M · Output 4K')
+        : text(' · 暂无会话缓存', ' · No cached session data')
+      const dockCost = region === 'composer' ? item('dock-cost', labels['dock-cost'], dockVisible,
+        dockVisible ? { position: 'off', hideSessionCostDock: true } : { position: 'dock', hideSessionCostDock: false },
+        el('span', { className: 'cm-dp' },
+          el('span', { className: 'cm-dl' }, dockAmountText,
+            inner('session-detail', config.sessionCostCompact !== true, dockDetail)))) : null
+      const headerBadge = region === 'conversation' ? item('badge', labels.badge, config.position === 'header',
+        { position: config.position === 'header' ? 'off' : 'header' },
+        el('span', { className: 'cm-dp cm-dp-header' }, t('sessionLineCompact', { amount: examples ? money(.32) : '—' }))) : null
       const cornerOn = config.corner?.enabled === true
       const native = (name, ...children) => el('div', { className: 'cm-native-' + name }, ...children)
       const icon = (name, size = 16) => el(Native[name], { size })
@@ -125,13 +184,12 @@ window.__ModuleLoader__.load({
           React.cloneElement(inner('corner-' + key, config.corner?.[key] === true, cornerSample(key)), { 'data-placeholder': label + ' —' }))))
       const dockModel = region === 'composer' ? item('models', text('模型花费', 'Model costs'), config.sidebarModels?.dock === true,
         { sidebarModels: { ...config.sidebarModels, dock: config.sidebarModels?.dock !== true } }, cornerSample('model', true)) : null
-      registry.badge = { on: config.position === (region === 'conversation' ? 'header' : 'dock'), patch: { position: config.position === (region === 'conversation' ? 'header' : 'dock') ? 'off' : region === 'conversation' ? 'header' : 'dock' } }
       if (region === 'composer') registry.models = { on: config.sidebarModels?.dock === true, patch: { sidebarModels: { ...config.sidebarModels, dock: config.sidebarModels?.dock !== true } } }
       const regions = [['sidebar', text('侧栏', 'Sidebar')], ['composer', text('输入区', 'Composer')], ['conversation', text('会话内容', 'Conversation')]]
       const scene = region === 'sidebar' ?
         el(SidebarPreview, { renderSidebar: renderPreviewSidebar, config: previewData.config, selected, selectedPlan, select, labels,
           displayConfig: config, visibility: { balance: balanceOn, budget: registry.budget.on, today: todayOn,
-            go: registry.go.on, peak: registry.peak.on, models: registry.models.on, plan: planOn, customBalance: registry.customBalance.on, codex: registry.codex.on },
+            go: registry.go.on, peak: registry.peak.on, models: registry.models.on, plan: planOn, customBalance: registry.customBalance.on, codex: registry.codex.on, localSavings: registry.localSavings.on },
           onOrder: order => { if (Object.hasOwn(config, 'sidebarOrder')) set({ sidebarOrder: order }) },
           listPreview: item('sessionList', labels.sessionList, config.sessionListCosts === true, registry.sessionList.patch,
             el('div', { style: { display: 'flex', alignItems: 'center', gap: 12, padding: 8 } }, el('span', { style: { flex: 1 } }, text('整理项目计划', 'Organize the project plan')),
@@ -146,11 +204,11 @@ window.__ModuleLoader__.load({
               native('input-trailing', native('model', examples ? 'DeepSeek-V41-Flash' : text('当前模型', 'Current model'), icon('IconChevronDownOutlineRegular', 12)), icon('IconMicrophoneOutlineRegular', 20), native('input-primary', icon('IconSendOutlineRegular', 24))))),
           native('input-dock', el('span', { className: 'cm-native-dock-stat', 'aria-hidden': true }, icon('IconGaugeOutlineRegular', 14), examples ? text('2 轮 6 步 · 273 tok/s', '2 turns · 6 steps · 273 tok/s') : '—'),
             el('span', { className: 'cm-native-dock-stat', 'aria-hidden': true }, icon('IconDatabaseOutlineRegular', 14), examples ? text('128K tok · 缓存命中 98%', '128K tok · 98% cache') : '—'),
-            session('dock'), badge('dock'), corner, dockModel,
+            dockCost, corner, dockModel,
             el('span', { className: 'cm-native-dock-context', 'aria-hidden': true }, el('i', { className: 'cm-native-context-ring' }), examples ? '29%' : '—'))) :
         el('div', { className: 'cm-preview-conversation' },
           el('div', { className: 'cm-native-chat-header', style: appearance.header },
-            el('div', { className: 'cm-native-chat-titleRow' }, el('span', null, examples ? text('整理项目计划', 'Organize the project plan') : text('会话费用显示位置', 'Conversation cost placement')), session('header'), badge('header')),
+            el('div', { className: 'cm-native-chat-titleRow' }, el('span', null, examples ? text('整理项目计划', 'Organize the project plan') : text('会话费用入口', 'Conversation cost')), headerBadge, sessionHeader),
             el('div', { className: 'cm-native-chat-tabs', 'aria-hidden': true }, ...[text('对话', 'Chat'), text('轨迹', 'Trace'), text('上下文', 'Context')].map((label, i) => el('span', { key: label, className: i === 0 ? 'active' : '' }, label)))),
           el('div', { className: 'cm-preview-response' },
             el('p', { 'aria-hidden': true }, examples ? text('已整理好项目资料，接下来可以确认计划与时间安排。', 'The project materials are ready. Next, review the plan and schedule.') : text('当前会话数据暂不可用，可开启示例数据查看完整效果。', 'Enable example data to see the complete conversation preview.')),
@@ -176,6 +234,7 @@ window.__ModuleLoader__.load({
         el('div', { className: 'cm-preview cm-region-preview', role: 'tabpanel', id: id + '-panel', 'aria-labelledby': id + region, 'data-region': region },
           el('div', { className: 'cm-preview-workspace' }, el('div', { className: 'cm-preview-scene' }, scene),
             el(DisplayInspector, { props, config, set, selected, selectedPlan, selectPlan, select, labels, registry, text, region, examples, previewData,
+              currencyChoices: currencyChoices(config, text), currencyPatch,
               stylesOpen, setStylesOpen, openQuota: () => { setExpanded(false); props.onNavigate('quotas', selected === 'codex' || selected === 'strip-codex' ? 'codex' : selectedPlan) } }))))
       return el('section', { className: 'cm-display', 'aria-label': text('交互式显示设置', 'Interactive display settings') },
         el('div', { className: 'cm-display-heading' }, el('div', null,
@@ -208,7 +267,7 @@ window.__ModuleLoader__.load({
           text('跟随皮肤透明度', 'Follow skin transparency')),
         el('span', { className: 'cm-hint' }, text('费用页与侧栏卡片跟随背景，弹窗保留至少 90% 不透明度。', 'Cost pages and sidebar cards share their background; dialogs remain at least 90% opaque.')))
     }
-    function DetailedSettings({ state, draft, setDraft, t, locale, numInput, displayOptions, CURRENCY_PRESETS, USAGE_POSITION_SWITCHABLE, open = false }) {
+    function DetailedSettings({ state, draft, setDraft, t, locale, numInput, displayOptions, USAGE_POSITION_SWITCHABLE, open = false }) {
       const config=state.config
       const text = (zh, en) => locale === 'en' ? en : zh
       const setField=(key,value)=>setDraft(previous=>({...previous,[key]:value}))
@@ -236,16 +295,6 @@ window.__ModuleLoader__.load({
                     el('option', { value: 'section' }, text('独立分节(用量)', 'Own section (Usage)'))))
               : null,
             el('div', { className: 'cm-field' },
-              el('label', null, t('positionLabel')),
-              el('select', {
-                className: 'cm-input',
-                value: draft?.position ?? 'dock',
-                onChange: event => setField('position', event.target.value),
-              },
-                el('option', { value: 'dock' }, t('positionDock')),
-                el('option', { value: 'header' }, t('positionHeader')),
-                el('option', { value: 'off' }, t('off')))),
-            el('div', { className: 'cm-field' },
               el('label', null, t('sidebarLabel')),
               el('select', {
                 className: 'cm-input',
@@ -271,15 +320,11 @@ window.__ModuleLoader__.load({
                 className: 'cm-input',
                 value: draft?.currency ?? 'CNY',
                 onChange: event => {
-                  const preset = CURRENCY_PRESETS[event.target.value]
-                  if (preset !== undefined && draft !== null) {
-                    setDraft({ ...draft, currency: event.target.value, ...preset, exchangeRate: draft.exchangeRateAuto !== false ? draft.fxRates?.[event.target.value] ?? preset.exchangeRate : preset.exchangeRate })
-                  }
+                  const patch = currencyPatch(event.target.value, draft ?? config)
+                  if (patch !== null && draft !== null) setDraft({ ...draft, ...patch })
                 },
               },
-                el('option', { value: 'CNY' }, t('currencyCny')),
-                el('option', { value: 'USD' }, t('currencyUsd')),
-                el('option', { value: 'EUR' }, t('currencyEur')))),
+                ...currencyChoices(draft ?? config, text).map(([code, label]) => el('option', { key: code, value: code }, label)))),
             el('div', { className: 'cm-field' },
               el('label', null, t('rateLabel')),
               // 清空不提交:汇率 0 会被服务端校验拒绝并整包报错,保留原值更友好。

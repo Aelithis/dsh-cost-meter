@@ -9,7 +9,7 @@ window.__ModuleLoader__.load({
     let lastPeakNotifyAtMs = 0
 
     function mount(helpers) {
-      const { peakView, peakPhaseAt, peakPhaseForConfig = (config, now) => peakPhaseAt(now, config.peakWindows, config.peakHolidays), peakConfigForState = state => state?.config, phaseLabelKeys, countdownText, resolveLocale, makeT, Tooltip, FloatingCard } = helpers
+      const { peakView, peakPhaseAt, peakPhaseForConfig = (config, now) => peakPhaseAt(now, config.peakWindows, config.peakHolidays), peakConfigForState = state => state?.config, peakPeriodProgress, usePeakClock, phaseLabelKeys, countdownText, resolveLocale, makeT, Tooltip, FloatingCard } = helpers
       let style = document.getElementById('dsh-cost-meter-peak-style')
       if (!style) { style = document.createElement('style'); style.id = 'dsh-cost-meter-peak-style'; document.head.appendChild(style) }
       style.textContent = css

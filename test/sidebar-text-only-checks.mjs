@@ -61,6 +61,7 @@ export async function checkSidebarTextOnly(page, output, { reload = false } = {}
   assert.equal(await english.isChecked(), true)
   await english.uncheck()
   await page.waitForFunction(() => window.current().sidebarTextOnly === false)
+  await plan.locator('.cm-bbox-bar').first().waitFor()
   assert.equal(await plan.locator('.cm-bbox-bar:visible').count(), 3)
   await english.check()
   await page.waitForFunction(() => window.current().sidebarTextOnly === true)
@@ -101,7 +102,10 @@ export async function checkSidebarTextOnly(page, output, { reload = false } = {}
   }
   await page.getByLabel('调整组件', { exact: true }).selectOption('peak')
   await page.getByLabel('显示时间', { exact: true }).selectOption('countdown')
-  await page.waitForFunction(() => window.current().peakTimeDisplay === 'countdown')
+  await page.waitForFunction(() => {
+    const peak = document.querySelector('#actual-sidebar [data-cm-display=peak]')
+    return window.current().peakTimeDisplay === 'countdown' && peak && !peak.innerText.includes(':')
+  })
   assert.equal(await host.locator('[data-cm-display=peak]').innerText().then(s => s.includes(':')), false)
   await page.getByLabel('显示时间', { exact: true }).selectOption('both')
   await toggle().uncheck()

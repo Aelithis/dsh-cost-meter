@@ -21,8 +21,8 @@ assert.equal(billingClassOf('deepseek', 'qwen3.8-flash', config.planBilling, new
 
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-10, `${actual} != ${expected}`)
 const modelsOf = p => VERIFIED_PROVIDER_PRICES[p].models
-assert.equal(Object.keys(modelsOf('opencode-zen')).length, 91, '87 current Zen endpoints and 4 retained historical IDs')
-assert.equal(Object.keys(modelsOf('opencode-go')).length, 35, '32 current Go endpoints and 3 retained historical IDs')
+assert.equal(Object.keys(modelsOf('opencode-zen')).length, 96, '83 current Zen endpoints and 13 retained historical IDs')
+assert.equal(Object.keys(modelsOf('opencode-go')).length, 41, '30 current Go endpoints and 11 retained historical IDs')
 const shipped = JSON.parse(readFileSync(new URL('../docs/provider-pricing.json', import.meta.url)))
 assert.deepEqual(shipped.providers, DEFAULT_PROVIDER_PRICE_TABLE, 'shipped catalog and executable prices agree')
 for (const [provider, table] of Object.entries(VERIFIED_PROVIDER_PRICES)) {
@@ -31,7 +31,7 @@ for (const [provider, table] of Object.entries(VERIFIED_PROVIDER_PRICES)) {
     assert.ok(normalized, `${provider}:${id} has a valid catalog row`)
     assert.equal(providerPriceEntryFor(provider, id, config.prices, { mode: 'exact' }).priced, raw.unpriced !== true, `${provider}:${id} exact mounted price`)
     assert.match(raw.sourceUrl, /^https:\/\//)
-    assert.ok(['2026-10-03', '2026-10-15', '2026-10-16'].includes(raw.checkedAt))
+    assert.ok(['2026-10-03', '2026-10-15', '2026-10-16', '2026-10-28', '2026-11-05'].includes(raw.checkedAt))
     if (raw.unpriced !== true) for (const value of [normalized.cacheHit, normalized.cacheMiss, normalized.output]) assert.ok(Number.isFinite(value) && value >= 0)
   }
 }
@@ -139,7 +139,7 @@ assert.equal(frontGo.billingMode, 'utc-peak')
 assert.equal(client.tierFor(client.normalizeClientPrice(frontGo.entry), Date.parse('2026-10-01T02:00:00Z'), peak).cacheMiss, 1.32)
 console.log('[ok] #224 provider catalogs: complete Zen/Go coverage, verified new API rates, cache/context tiers, scoped prices, UTC Go calendar, codecs and manual-price persistence')
 
-const sourceAudit = spawnSync(process.execPath, [fileURLToPath(new URL('./check-opencode-catalog.mjs', import.meta.url)), '--fixture=' + fileURLToPath(new URL('./fixtures/opencode-pricing-2026-10-15.json', import.meta.url))], { encoding: 'utf8' })
+const sourceAudit = spawnSync(process.execPath, [fileURLToPath(new URL('./check-opencode-catalog.mjs', import.meta.url)), '--fixture=' + fileURLToPath(new URL('./fixtures/opencode-pricing-2026-10-28.json', import.meta.url))], { encoding: 'utf8' })
 assert.equal(sourceAudit.status, 0, sourceAudit.stdout + sourceAudit.stderr)
 console.log(sourceAudit.stdout.trim())
 

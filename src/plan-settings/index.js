@@ -1,23 +1,35 @@
 /** On-demand subscription settings, including WorkBuddy account statistics. */
 window.__ModuleLoader__.load({ id: 'dsh-cost-meter', chunk: 'client.plan-settings.js', factory: require => {
-  const { createElement: el, useState, Fragment } = require('react')
+  const { createElement: el, useState, useEffect, Fragment } = require('react')
+  const subscriptionCatalog = /* SUBSCRIPTION_CATALOG_SOURCE */ {}
   return { mount(helpers) {
-    const { useQuotaRefresh, miniMaxWindowsOf, MiniMaxPlanCard, barDirectionOf, quotaWindowRow, codingPlanWindowLabel, codingPlanWindowEntries, numInput, CredentialField, QuotaCard, resolveLocale, formatMoneyUsd, quotaPlacementValue, quotaPlacementPatch, quotaPlacementOptions } = helpers
+    const { useQuotaRefresh, miniMaxWindowsOf, MiniMaxPlanCard, barDirectionOf, quotaWindowRow, codingPlanWindowLabel, codingPlanWindowEntries, numInput, CredentialField, QuotaCard, resolveLocale, formatMoneyUsd, formatBalanceMoney, quotaPlacementValue, quotaPlacementPatch, quotaPlacementOptions } = helpers
     function AccountCredentialField(props) {
       const { state, draft, setDraft, target, api } = props
       const text = (zh, en) => resolveLocale(state.config) === 'en' ? en : zh
       const source = target.replace(/\.(ak|sk)$/, '')
+      const selectionLabel = source === 'balance' ? text('当前账号', 'Current account') : text('查询并显示的账号', 'Account to query and display')
       const groups = (draft ?? state.config).queryAccounts ?? {}
       const group = groups[source] ?? { selected: 'default', accounts: [] }
       const saved = state.config.queryAccounts?.[source]?.selected ?? 'default'
       const [name, setName] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('')
+      const current = group.accounts.find(row => row.id === group.selected)
+      const [rename, setRename] = useState(current?.label ?? '')
+      useEffect(() => setRename(current?.label ?? ''), [current?.id, current?.label])
       const pending = saved !== group.selected || draft === null || busy
       const change = value => setDraft({ ...draft, queryAccounts: { ...groups, [source]: value } })
       const add = () => {
         const label = name.trim()
         if (!label || group.accounts.length >= 10 || pending) return
+        if (group.accounts.some(row => row.label.toLowerCase() === label.toLowerCase())) { setError(text('账号名称已存在', 'Account name already exists')); return }
         const id = crypto.randomUUID()
         change({ selected: id, accounts: [...group.accounts, { id, label }] }); setName(''); setError('')
+      }
+      const saveName = () => {
+        const label = rename.trim()
+        if (!label || pending || !current) return
+        if (group.accounts.some(row => row.id !== current.id && row.label.toLowerCase() === label.toLowerCase())) { setError(text('账号名称已存在', 'Account name already exists')); return }
+        change({ ...group, accounts: group.accounts.map(row => row.id === current.id ? { ...row, label } : row) }); setError('')
       }
       const remove = async () => {
         if (pending || group.selected === 'default') return
@@ -25,21 +37,29 @@ window.__ModuleLoader__.load({ id: 'dsh-cost-meter', chunk: 'client.plan-setting
         try {
           const targets = source === 'codingPlans.volcengine' ? [source + '.ak', source + '.sk'] : [source]
           for (const key of targets) await api.clearCredential(key + '@' + group.selected)
-          change({ selected: 'default', accounts: group.accounts.filter(row => row.id !== group.selected) })
+          const accounts = group.accounts.filter(row => row.id !== group.selected)
+          change({ selected: source === 'balance' ? accounts[0]?.id ?? 'default' : 'default', accounts })
         } catch (e) { setError(String(e?.message ?? e)) }
         finally { setBusy(false) }
       }
       return el('div', { 'data-query-account': target },
         !target.endsWith('.sk') ? el('div', { className: 'cm-field' },
-          el('label', null, text('查询并显示的账号', 'Account to query and display'),
-            el('select', { className: 'cm-input', 'aria-label': text('查询并显示的账号', 'Account to query and display'), value: group.selected, disabled: busy || draft === null, onChange: e => change({ ...group, selected: e.target.value }) },
+          el('label', null, selectionLabel,
+            el('select', { className: 'cm-input', 'aria-label': selectionLabel, value: group.selected, disabled: busy || draft === null, onChange: e => change({ ...group, selected: e.target.value }) },
               el('option', { value: 'default' }, text('默认账号（现有配置）', 'Default account (existing configuration)')),
               ...group.accounts.map(row => el('option', { key: row.id, value: row.id }, row.label)))),
           el('div', { className: 'cm-buttons' },
             el('input', { className: 'cm-input', type: 'text', value: name, maxLength: 64, autoComplete: 'off', 'aria-label': text('新账号名称', 'New account name'), placeholder: text('如：工作账号', 'e.g. Work account'), disabled: pending, onChange: e => setName(e.target.value), style: { minWidth: 0, flex: 1 } }),
             el('button', { className: 'cm-btn small', type: 'button', disabled: pending || !name.trim() || group.accounts.length >= 10, onClick: add }, text('添加账号', 'Add account')),
             group.selected !== 'default' ? el('button', { className: 'cm-btn small', type: 'button', disabled: pending, onClick: remove }, text('移除账号', 'Remove account')) : null),
-          el('p', { className: 'cm-note' }, text('每个账号单独保存凭据，仅查询所选账号。默认账号沿用现有自动识别；新增账号不会回退到其他账号。区域、工作区等查询设置由同一来源共用。', 'Each account has its own credential; only the selected account is queried. Default keeps existing discovery. Added accounts never fall back to another account. Region and workspace settings are shared by this source.')),
+          current ? el('div', { className: 'cm-buttons' },
+            el('input', { className: 'cm-input', value: rename, maxLength: 64, 'aria-label': text('账号名称', 'Account name'), disabled: pending, onChange: e => setRename(e.target.value), style: { minWidth: 0, flex: 1 } }),
+            el('button', { className: 'cm-btn small', type: 'button', disabled: pending || !rename.trim() || rename.trim() === current.label, onClick: saveName }, text('保存名称', 'Save name'))) : null,
+          source === 'balance' && state.balanceAccounts?.length ? el('div', { className: 'cm-scroll', 'data-balance-accounts': true },
+            ...state.balanceAccounts.map(row => el('div', { key: row.id, style: { display: 'flex', gap: 10, alignItems: 'center', padding: '8px 10px' } },
+              el('span', { style: { flex: 1, minWidth: 0, overflowWrap: 'anywhere' } }, row.label),
+              el('span', { className: 'cm-num', title: row.message || undefined }, row.status === 'ok' ? formatBalanceMoney(row.totalBalance, state.config, row.currency) : text('查询失败', 'Query failed')),
+              el('button', { className: 'cm-btn small', type: 'button', disabled: pending || row.id === group.selected, onClick: () => change({ ...group, selected: row.id }) }, row.id === group.selected ? text('当前', 'Current') : text('切换', 'Use'))))) : null,
           error ? el('p', { role: 'alert', className: 'cm-msg err' }, error) : null) : null,
         el(CredentialField, { ...props, key: target + '@' + group.selected, target: target + '@' + group.selected, disabled: props.disabled || pending, configured: !pending && props.configured }))
     }
@@ -86,6 +106,8 @@ window.__ModuleLoader__.load({ id: 'dsh-cost-meter', chunk: 'client.plan-setting
       const loginRequired = planId === 'qwen' && config.codingPlans?.qwen?.quotaSource === 'bailian'
         && cfgEntry.quotaSource === 'bailian' && live.quotaSource === 'bailian' && live.loginRequired === true
       const [busy, msg, doRefresh] = useQuotaRefresh(t, () => loginRequired ? api.loginCodingPlan(planId) : api.refreshCodingPlan(planId))
+      // OpenDesign 一键获取:独立的 busy/文案,避免与卡片头的「刷新」状态互相覆盖。
+      const [loginBusy, loginMsg, doLogin] = useQuotaRefresh(t, () => api.loginOpenDesign())
       const setPlan = (field, value) => {
         if (draft === null) return
         const base = draft.codingPlans ?? config.codingPlans ?? {}
@@ -150,10 +172,19 @@ window.__ModuleLoader__.load({ id: 'dsh-cost-meter', chunk: 'client.plan-setting
               ? el('p', { className: 'cm-note' }, live.message)
               : el('div', { className: 'cm-bal-line' }, t('codingPlanNotQueried'))
       const configNode = el(Fragment, null,
+        subscriptionCatalog[planId] ? el('p', { className: 'cm-note', 'data-cm-plan-catalog': planId },
+          subscriptionCatalog[planId][resolveLocale(state.config) === 'en' ? 'en' : 'zh'], ' ',
+          el('a', { href: subscriptionCatalog[planId].sourceUrl, target: '_blank', rel: 'noopener noreferrer', style: { whiteSpace: 'nowrap' } }, resolveLocale(state.config) === 'en' ? 'Plan details' : '套餐详情')) : null,
         planId === 'opendesign' ? el('div', { className: 'cm-field' },
           el('label', null, t('opendesignWorkspace')),
           el('input', { className: 'cm-input', 'aria-label': t('opendesignWorkspace'), value: cfgEntry.workspaceId ?? '', onChange: e => setPlan('workspaceId', e.target.value) }),
           el('p', { className: 'cm-note' }, t('opendesignNote'))) : null,
+        // OpenDesign 一键获取(设备码授权):不依赖桌面端、不需要 F12 复制 Cookie。
+        // 授权页与验证码只写入宿主日志,这里只负责触发与展示结果。
+        planId === 'opendesign' ? el('div', { className: 'cm-field' },
+          el('button', { type: 'button', className: 'cm-btn small', 'data-cm-action': 'opendesign-login', disabled: loginBusy, onClick: doLogin },
+            loginBusy ? t('loggingIn') : t('opendesignLogin')),
+          loginMsg ? el('p', { className: 'cm-note' }, loginMsg.text) : null) : null,
         planId === 'factory' ? el(Fragment, null,
           el('div', { className: 'cm-field' },
             el('label', null, t('factoryPool')),
@@ -274,13 +305,13 @@ window.__ModuleLoader__.load({ id: 'dsh-cost-meter', chunk: 'client.plan-setting
             : planId === 'workbuddy' ? el(Fragment, null, el('p', { className: 'cm-note' }, t('wbH')), el(WorkBuddyAccounts, { live, config: cfgEntry, setPlan, state }))
             : el(Fragment, null,
               el('div', { className: 'cm-field' },
-                el('label', null, planId === 'baidu-coding' ? 'Cookie (console.bce.baidu.com)' : planId === 'mimo' ? 'Cookie (platform.xiaomimimo.com)' : planId === 'factory' ? 'Factory Token' : planId === 'opendesign' ? 'OpenDesign Control Key' : t('codingPlanKeyLabel'))),
+                el('label', null, planId === 'baidu-coding' ? 'Cookie (console.bce.baidu.com)' : planId === 'mimo' ? 'Cookie (platform.xiaomimimo.com)' : planId === 'factory' ? 'Factory Token' : planId === 'opendesign' ? 'OpenDesign Cookie / Control Key' : t('codingPlanKeyLabel'))),
               el(AccountCredentialField, { state, draft, setDraft,
                 target: 'codingPlans.' + planId,
                 configured: live.keyConfigured === true,
                 source: live.keySource,
                 t, api,
-                placeholder: planId === 'baidu-coding' ? 'BAIDU_QIANFAN_COOKIE' : planId === 'mimo' ? 'api-platform_serviceToken=…; userId=…' : planId === 'factory' ? 'FACTORY_API_KEY' : planId === 'opendesign' ? 'OPENDESIGN_CONTROL_KEY' : 'sk-…',
+                placeholder: planId === 'baidu-coding' ? 'BAIDU_QIANFAN_COOKIE' : planId === 'mimo' ? 'api-platform_serviceToken=…; userId=…' : planId === 'factory' ? 'FACTORY_API_KEY' : planId === 'opendesign' ? 'Cookie: name=value; … / vela_ctrl_…' : 'sk-…',
               }),
               planId === 'baidu-coding' ? el('p', { className: 'cm-note' }, resolveLocale(state.config) === 'en'
                 ? 'Sign in at console.bce.baidu.com, open Token Plan → browser Network → tokenPlanPersonal/resource, and copy the full Cookie request header. Supports Personal credits and Tokens; excludes add-on packs. API keys cannot query quotas.'

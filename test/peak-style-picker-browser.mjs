@@ -11,7 +11,7 @@ import { javascriptLiteral as literal } from '../scripts/javascript-literal.mjs'
 const req = createRequire(join(resolve(process.env.DSH_TEST_UI_MODULES ?? '.tmp-context-host/node_modules'), '__peak-picker.cjs'))
 const { chromium } = req('playwright-core')
 const output = resolve('.tmp-peak-progress-preview/style-picker'); mkdirSync(output,{recursive:true})
-let saved = sanitizeConfig({ locale:'zh',peakEnabled:true,peakNotice:true,peakStyle:'progress',sidebarSimple:true,
+let saved = sanitizeConfig({ locale:'zh',peakEnabled:true,peakNotice:true,peakStyle:'progress',sidebarSimple:true,sidebarTextOnly:true,
   hideTodayCost:true,hideOfficialBalance:true,hideBudget:true,sidebarModels:{enabled:false},goQuota:{enabled:false},
   balance:{display:'off'},budget:{enabled:true,amount:200},quotaStrip:{promptSeen:true} })
 const total = {...zeroDay(),cost:1.28,apiCost:1.28,calls:14}
@@ -20,11 +20,13 @@ const client = readdirSync('src/client').filter(n=>n.endsWith('.js')).sort().map
   .replace('exports.apply = apply','exports.picker = { renderSidebarFooter, CornerChips, makeT, css, formatMoneyUsd }; exports.apply = apply')
 const code = `
 import * as ReactDOMPortal from ${literal(req.resolve('react-dom'))};import React from ${literal(req.resolve('react'))};import{createRoot}from ${literal(req.resolve('react-dom/client'))};const h=React.createElement;
-const mainRequire=name=>name==='react'?React:{Tooltip:({children})=>children};mainRequire.async=async()=>window.peakUI;
+const mainRequire=name=>name==='react'?React:{Tooltip:({children})=>children};mainRequire.async=async path=>{const chunk=path==='./client.peak.js'?window.peakUI:path==='./client.sidebar-icons.js'?window.sidebarIconsUI:null;if(!chunk)throw Error('Unexpected test chunk: '+path);return chunk};
 window.__ModuleLoader__={load:mod=>window.mainUI=mod.factory(mainRequire)};
 ${client}
 window.__ModuleLoader__={load:mod=>window.peakUI=mod.factory(name=>name==='react-dom'?ReactDOMPortal:React)};
 ${readFileSync('lib/client.peak.js','utf8')}
+window.__ModuleLoader__={load:mod=>window.sidebarIconsUI=mod.factory(name=>name==='react'?React:{})};
+${readFileSync('lib/client.sidebar-icons.js','utf8')}
 window.__ModuleLoader__={load:mod=>window.displayUI=mod.factory(()=>React)};
 ${readFileSync('lib/client.display.js','utf8')}
 const Display=window.displayUI.mount({effect:()=>{}}),{renderSidebarFooter,CornerChips,makeT,css,formatMoneyUsd}=window.mainUI.picker;
@@ -33,7 +35,7 @@ function App(){const[config,setConfig]=React.useState(base.config);window.curren
 React.useEffect(()=>{const select=document.querySelector('select[aria-label="调整组件"]');if(select){select.value='peak';select.dispatchEvent(new Event('change',{bubbles:true}))}},[]);
 const setDraft=next=>{const value=typeof next==='function'?next(config):next;window.writes++;Promise.resolve(window.persist?window.persist(value):value).then(setConfig)};
 const renderSidebar=(preview,data=base)=>renderSidebarFooter({...data,config:preview},true,undefined,true),renderCorner=data=>h(CornerChips,{useCost:()=>({state:data})});
-return h(React.Fragment,null,h('style',null,css),h('button',{id:'theme',onClick:()=>document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark'},'切换深浅色'),h('p',{className:'preview-label'},'本地预览 · 此页调整不会保存到 DSH'),h(Display,{state:{...base,config},draft:config,setDraft,t:makeT(config.locale),locale:config.locale,formatMoneyUsd,renderSidebar,renderCorner,renderStyleSample:renderSidebar,renderModelsSettings:()=>null,onNavigate:()=>{},numInput:(p,change)=>h('input',{className:'cm-input',value:p.value??'',type:'number',onChange:e=>change(Number(e.target.value))}),CURRENCY_PRESETS:{CNY:{symbol:'¥',exchangeRate:7.2},USD:{symbol:'$',exchangeRate:1},EUR:{symbol:'€',exchangeRate:.9}},displayOptions:()=>['sidebar','settings','both','off'].map(v=>h('option',{key:v,value:v},v)),USAGE_POSITION_SWITCHABLE:false}))}
+return h(React.Fragment,null,h('style',null,css),h('button',{id:'theme',onClick:()=>document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark'},'切换深浅色'),h('p',{className:'preview-label'},'本地预览 · 此页调整不会保存到 DSH'),h(Display,{state:{...base,config},draft:config,setDraft,t:makeT(config.locale),locale:config.locale,formatMoneyUsd,renderSidebar,renderCorner,renderStyleSample:renderSidebar,renderModelsSettings:()=>null,onNavigate:()=>{},numInput:(p,change)=>h('input',{className:'cm-input',value:p.value??'',type:'number',onChange:e=>change(Number(e.target.value))}),displayOptions:()=>['sidebar','settings','both','off'].map(v=>h('option',{key:v,value:v},v)),USAGE_POSITION_SWITCHABLE:false}))}
 createRoot(document.getElementById('root')).render(h(App));
 `
 const compiled=await build({stdin:{contents:code,resolveDir:process.cwd(),loader:'js'},bundle:true,write:false,platform:'browser',format:'iife'})
@@ -42,12 +44,13 @@ writeFileSync(join(output,'app.js'),compiled.outputFiles[0].contents);writeFileS
 const server=createServer((request,response)=>{response.setHeader('content-type',request.url==='/settings-preview.js'?'text/javascript':'text/html;charset=utf-8');response.end(request.url==='/settings-preview.js'?compiled.outputFiles[0].contents:html)})
 await new Promise(done=>server.listen(0,'127.0.0.1',done));const url=`http://127.0.0.1:${server.address().port}/`
 const browser=await chromium.launch({executablePath:process.env.CM_TEST_BROWSER??['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe','/usr/bin/google-chrome','/usr/bin/chromium'].find(existsSync),headless:true})
-const page=await browser.newPage({viewport:{width:1100,height:1050}})
+const page=await browser.newPage({viewport:{width:1100,height:1050},timezoneId:'America/New_York'})
 const errors=[],external=[]
 page.on('pageerror',e=>errors.push(e.message))
 await page.route('**/*',route=>new URL(route.request().url()).origin===new URL(url).origin?route.continue():(external.push(route.request().url()),route.abort()))
 await page.exposeFunction('persist',patch=>{const result=applyConfigPatch(saved,patch);assert.deepEqual(result.errors,[]);saved=stateSchema.shape.config.parse(result.config);return saved})
 try{
+  await page.clock.setFixedTime(new Date('2026-10-29T05:57:32Z'))
   await page.goto(url);await page.getByLabel('调整组件',{exact:true}).selectOption('peak')
   const choices=page.getByRole('group',{name:'峰谷条样式',exact:true})
   await choices.locator('.cm-peak-progress').waitFor()
@@ -55,6 +58,25 @@ try{
   for(const selector of ['.cm-peak-progress','.cm-peak-strip','.cm-peak-classic'])assert.equal(await choices.locator(selector).count(),1,'each choice renders its own real component')
   assert.equal(await choices.locator('[data-cm-display]:not([data-cm-display=peak])').count(),0,'style examples mount only the peak component')
   assert.equal(await page.evaluate(()=>window.writes),0,'rendering and selecting a component never saves example configuration')
+  assert.equal(await page.locator('.cm-sidebar-live [role=progressbar]').count(),0,'saved text-only mode is retained until the user chooses a graphical style')
+  assert.equal(await choices.locator('.cm-peak-progress-track,.cm-peak-track').count(),3,'all graphical choices remain visible in text-only mode')
+  await page.getByText('侧栏纯文字模式已隐藏进度条。选择下方样式可恢复侧栏进度条。',{exact:true}).waitFor()
+  await choices.getByRole('button',{name:'进度条',exact:true}).click()
+  await page.waitForFunction(()=>window.current().sidebarTextOnly===false)
+  await page.locator('.cm-sidebar-live .cm-peak-progress-track').waitFor()
+  assert.equal(saved.sidebarTextOnly,false,'an explicit graphical selection restores bars without changing billing settings')
+  const zone=page.getByLabel('峰谷显示时区',{exact:true})
+  assert.equal(await zone.inputValue(),'auto')
+  assert.ok((await zone.locator('option[value=auto]').innerText()).includes('America/New_York'))
+  const period=page.locator('.cm-sidebar-live .cm-peak-progress').first()
+  const beforeZone=await choices.locator('.cm-peak-progress').getAttribute('data-switch-at')
+  assert.ok((await choices.locator('.cm-peak-progress').getAttribute('aria-label')).includes('America/New_York'))
+  await zone.selectOption('Asia/Kathmandu');await page.waitForFunction(()=>window.current().peakTimeZone==='Asia/Kathmandu')
+  assert.equal(saved.peakTimeZone,'Asia/Kathmandu')
+  assert.equal(await choices.locator('.cm-peak-progress').getAttribute('data-switch-at'),beforeZone,'display timezone cannot move the billing boundary')
+  assert.ok((await choices.locator('.cm-peak-progress').getAttribute('aria-label')).includes('Asia/Kathmandu'))
+  await page.screenshot({path:join(output,'timezone-kathmandu.png'),fullPage:true})
+  await zone.selectOption('auto');await page.waitForFunction(()=>window.current().peakTimeZone==='auto')
   const field=page.getByLabel('显示时间',{exact:true})
   let cards=await choices.boundingBox(),time=await field.boundingBox()
   assert.ok(time.y>=cards.y+cards.height,'time options are below all style choices')

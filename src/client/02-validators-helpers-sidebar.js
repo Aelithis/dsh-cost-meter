@@ -107,6 +107,7 @@
           return { ...parsePrice({ ...period, rateHistory: undefined }, path + '.rateHistory.' + i), before: period.before }
         })
       }
+      Object.assign(out, peakScheduleSettings(v))
       for (const key of ['billingMode', 'sourceUrl', 'checkedAt', 'notes']) if (typeof v[key] === 'string') out[key] = v[key]
       return out
     }
@@ -146,6 +147,7 @@
         ...mapFields(v, ['hideSessionCostHeader', 'hideSessionCostDock', 'hideTurnCost', 'followSkinTransparency', 'sidebarTodayBalanceInline', 'sessionListCosts', 'hideBudget', 'sessionCostCompact', 'contextCostsEnabled', 'contextCostsPromptSeen', 'showTotalWithPlan', 'sidebarSimple', 'codexQuotaEnabled', 'codexCompatPromptDismissed', 'includeSubagentCost', 'peakEnabled', 'peakAlertWebNotify'], value => value === true),
         sidebarTodayMetric: ['tokens', 'both'].includes(v.sidebarTodayMetric) ? v.sidebarTodayMetric : 'cost',
         sidebarTextOnly: v.sidebarTextOnly === true,
+        localSavings: v.localSavings,
         ...(Object.hasOwn(v, 'sidebarOrder') ? { sidebarOrder: Array.isArray(v.sidebarOrder) ? v.sidebarOrder : [] } : {}),
         statisticsBasis: v.statisticsBasis,
         sidebarModels: Object.fromEntries(Object.entries(MODEL_SIDEBAR_DEFAULTS).map(([k, v0]) => [k, v.sidebarModels?.[k] ?? v0])),
@@ -155,7 +157,8 @@
         // Codex 订阅兼容(契约 B-5):用户已关闭一次性提示 / 已应用历史归类的时点。
         // 直通白名单缺失会导致关闭后重开页面又弹提示,或应用后状态行回落「未应用」。
         codexCompatHistoryAppliedAt: num0(v.codexCompatHistoryAppliedAt),
-        sidebarStyle: oneOf(v.sidebarStyle, ['standard', 'compact', 'summary'], 'standard'),
+        sidebarStyle: oneOf(v.sidebarStyle, ['standard', 'compact', 'summary', 'icons'], 'standard'),
+        planQuotaStyle: v.planQuotaStyle === 'gauge' ? 'gauge' : 'bars',
         ...mapFields(v, ['sidebarSimplePromptSeen', 'sidebarSummaryPromptSeen', 'peakProgressPromptSeen'].filter(key => Object.hasOwn(v, key)), value => value === true),
         billionContextNoticeEnabled: v.billionContextNoticeEnabled !== false,
         billionContextNoticesSeen: Array.isArray(v.billionContextNoticesSeen) ? v.billionContextNoticesSeen.filter(value => typeof value === 'string').slice(-32) : [],
@@ -179,6 +182,7 @@
         peakAlertTarget: v.peakAlertTarget === 'peak' || v.peakAlertTarget === 'offpeak' ? v.peakAlertTarget : 'both',
         peakAlertPosition: v.peakAlertPosition === 'center' ? 'center' : 'corner',
         peakStyle: ['classic', 'progress'].includes(v.peakStyle) ? v.peakStyle : 'compact',
+        peakTimeZone: typeof v.peakTimeZone === 'string' ? v.peakTimeZone : 'auto',
         peakTimeDisplay: ['countdown', 'switch'].includes(v.peakTimeDisplay) ? v.peakTimeDisplay : 'both',
         priceMatch: v.priceMatch === 'exact' ? 'exact' : 'auto',
         priceOverrides: (() => {
@@ -248,12 +252,15 @@
           detail: v.budget?.detail !== false,
         },
         balance: {
+          source: v.balance?.source === 'account' ? 'account' : 'auto',
           display: oneOf(v.balance?.display, ['sidebar', 'settings', 'off'], 'both'),
           refreshMinutes: typeof v.balance?.refreshMinutes === 'number' && Number.isFinite(v.balance.refreshMinutes) ? v.balance.refreshMinutes : 5,
           showProgressBar: v.balance?.showProgressBar === true,
           showSource: v.balance?.showSource === true,
           officialChannelOnly: v.balance?.officialChannelOnly === true,
+          quickHide: v.balance?.quickHide === true,
           budgetCap: typeof v.balance?.budgetCap === 'number' && Number.isFinite(v.balance.budgetCap) && v.balance.budgetCap > 0 ? v.balance.budgetCap : null,
+          currency: v.balance?.currency ?? 'native',
           ...(Object.hasOwn(v.balance ?? {}, 'clickHintSeen') ? { clickHintSeen: v.balance?.clickHintSeen === true } : {}),
         },
         goQuota: {
@@ -303,6 +310,7 @@
           budget: v.quotaStrip?.budget !== false,
           go: v.quotaStrip?.go !== false,
           plans: v.quotaStrip?.plans !== false,
+          planAmounts: v.quotaStrip?.planAmounts !== false,
           ...(Object.hasOwn(v.quotaStrip ?? {}, 'promptSeen') ? { promptSeen: v.quotaStrip?.promptSeen === true } : {}),
         },
         usage: {
@@ -450,7 +458,9 @@
         month: parseDay(v.month, path + '.month'),
         total: parseDay(v.total, path + '.total'),
         budgetUsed: typeof v.budgetUsed === 'number' && Number.isFinite(v.budgetUsed) ? v.budgetUsed : undefined,
+        localSavings: v.localSavings,
         balance: v.balance == null ? EMPTY_BAL : parseBalance(v.balance, path + '.balance'),
+        balanceAccounts: Array.isArray(v.balanceAccounts) ? v.balanceAccounts.slice(0, 11).map(row => ({ ...parseBalance(row, path + '.balanceAccounts'), id: needStr(row.id, path), label: needStr(row.label, path) })) : [],
         goQuota: v.goQuota == null ? EMPTY_GO : parseGoQuota(v.goQuota, path + '.goQuota'),
         customBalance: v.customBalance == null ? emptyCustomSnapshot() : parseCustomBalance(v.customBalance, path + '.customBalance'),
         // 多配置形态(v1.7.0,issue #79):全部条目快照;缺失/畸形回落空数组
@@ -644,6 +654,10 @@
           parameters: [rpcParam('provider', 'CodingPlanProvider', providerCodec)],
           },
         {
+          // OpenDesign 一键获取:仅登录并刷新,无参数;结果与其它刷新同形(FetchPricesResult)。
+          method: 'loginOpenDesign',
+          },
+        {
           method: 'refreshGatewayQuota',
           parameters: [rpcParam('sourceId', 'GatewayQuotaSourceId', codecOf(v => {
             if (v === undefined || v === null) return undefined
@@ -670,7 +684,7 @@
         },
         {
           id: 'dsh-cost-meter#costMeter/getTurnCost', service: 'costMeter', namespace: 'costMeter', method: 'getTurnCost', invocation: { kind: 'direct' },
-          parameters: [rpcParam('sessionId', 'SessionId', codecOf(v => needStr(v, 'sessionId'))), ...['startSeq', 'endSeq'].map(name => rpcParam(name, 'TurnSeq', codecOf(v => { if (!Number.isSafeInteger(v) || v < 0) fail(name, 'nonnegative integer'); return v }))), { ...rpcParam('displayCurrency', 'DisplayCurrency', codecOf(v => { if (v !== undefined && !['USD', 'CNY', 'EUR'].includes(v)) fail('displayCurrency', 'currency'); return v })), acceptsUndefined: true }],
+          parameters: [rpcParam('sessionId', 'SessionId', codecOf(v => needStr(v, 'sessionId'))), ...['startSeq', 'endSeq'].map(name => rpcParam(name, 'TurnSeq', codecOf(v => { if (!Number.isSafeInteger(v) || v < 0) fail(name, 'nonnegative integer'); return v }))), { ...rpcParam('displayCurrency', 'DisplayCurrency', codecOf(v => { if (v !== undefined && !/^[A-Z]{3}$/.test(v)) fail('displayCurrency', 'currency'); return v })), acceptsUndefined: true }],
           result: strictCodec('TurnCost', codecOf(v => ({ ...parseFrozenMoney(v), found: needBool(v.found, 'found'), ...(v.inherited === undefined ? {} : { inherited: needBool(v.inherited, 'inherited') }), cost: needNum(v.cost, 'cost'), apiCost: needNum(v.apiCost, 'apiCost'), rows: parseTurnRows(v.rows),
             calls: (Array.isArray(v.calls) ? v.calls : fail('calls', 'array')).map(c => ({ kind: needStr(c.kind, 'kind'), provider: needStr(c.provider, 'provider'), model: needStr(c.model, 'model'), atMs: needNum(c.atMs, 'atMs'), cost: needNum(c.cost, 'cost'), apiCost: needNum(c.apiCost, 'apiCost'), plan: needBool(c.plan, 'plan'), priced: needBool(c.priced, 'priced'), longContext: needBool(c.longContext, 'longContext'), rows: parseTurnRows(c.rows), ...(c.metering ? { metering: parseMetering(c.metering) } : {}) })) }))),
         },
@@ -713,6 +727,58 @@
     }
     /** 一档价格补齐(v1.6.9 起与 lib/pricing.js completeTier 同口径的客户端镜像):
      *  只认非负有限数字,补齐 cacheMiss/cacheHit 缺省;子档(offPeak/peak/legacyBase)同规则。 */
+    // Mirror of lib/peak-schedule.js, exercised with the server pricing tests.
+    const peakScheduleKeys = ['peakWindows', 'peakHolidays', 'peakSchedule']
+    function peakScheduleSettings(value) {
+      return Object.fromEntries(peakScheduleKeys.filter(key => value?.[key] !== undefined).map(key => [key, value[key]]))
+    }
+    function validPeakSchedule(value) {
+      if (!value || typeof value !== 'object') return false
+      if (value.peakWindows !== undefined && (!Array.isArray(value.peakWindows) || value.peakWindows.length > 24 || value.peakWindows.some(w => !w || !Number.isFinite(w.start) || !Number.isFinite(w.end) || w.start < 0 || w.start >= 24 || w.end < 0 || w.end > 24 || w.start === w.end))) return false
+      if (value.peakSchedule !== undefined && !['deepseek', 'volcengine', 'ollama', 'daily', 'utc-weekdays'].includes(value.peakSchedule)) return false
+      if (value.peakHolidays !== undefined && value.peakHolidays !== null && (!Array.isArray(value.peakHolidays) || value.peakHolidays.length > 366 || value.peakHolidays.some(day => typeof day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(Date.parse(day + 'T00:00:00Z')) || new Date(day + 'T00:00:00Z').toISOString().slice(0, 10) !== day))) return false
+      return true
+    }
+    function withProviderPeakSchedule(result, provider, prices) {
+      if (!result?.entry) return result
+      const table = prices?.providers?.[provider] ?? (['deepseek-official', 'deepseek-account', ''].includes(provider) ? prices?.providers?.deepseek : undefined)
+      const entry = { ...peakScheduleSettings(table), ...result.entry }
+      return { ...result, entry, billingMode: (entry.peak || entry.offPeak) && Object.keys(peakScheduleSettings(entry)).length && entry.billingMode !== 'flat' ? 'deepseek-peak' : result.billingMode }
+    }
+    function configuredPeakAt(entry, atMs, peak) {
+      const explicit = entry.peakWindows !== undefined || entry.peakHolidays !== undefined || ['daily', 'utc-weekdays', 'deepseek'].includes(entry.peakSchedule)
+      if (!explicit) return null
+      if (peak?.enabled !== true || !Number.isFinite(atMs) || (Number.isFinite(peak.effectiveAtMs) && atMs < peak.effectiveAtMs)) return 'base'
+      const schedule = entry.peakSchedule ?? (entry.billingMode === 'utc-peak' ? 'utc-weekdays' : 'deepseek')
+      const windows = entry.peakWindows ?? (schedule === 'ollama' ? [{ start: 12, end: 18 }] : peak.windows ?? [])
+      const holidays = entry.peakHolidays === null ? [] : entry.peakHolidays ?? (['ollama', 'volcengine', 'utc-weekdays', 'daily'].includes(schedule) ? [] : peak.holidays ?? [])
+      const local = new Date(atMs + 8 * 3600000), utc = new Date(atMs)
+      const day = ['ollama', 'utc-weekdays'].includes(schedule) ? utc.getUTCDay() : local.getUTCDay()
+      if ((schedule !== 'daily' && (day === 0 || day === 6)) || holidays.includes(local.toISOString().slice(0, 10))) return 'offPeak'
+      const hour = utc.getUTCHours() + utc.getUTCMinutes() / 60 + utc.getUTCSeconds() / 3600 + utc.getUTCMilliseconds() / 3600000
+      return windows.some(w => w.start < w.end ? hour >= w.start && hour < w.end : hour >= w.start || hour < w.end) ? 'peak' : 'offPeak'
+    }
+
+    function configuredPeakPhase(entry, atMs, peak) {
+      const phase = configuredPeakAt(entry, atMs, peak)
+      if (phase === null || phase === 'base') return null
+      const windows = entry.peakWindows ?? (entry.peakSchedule === 'ollama' ? [{ start: 12, end: 18 }] : peak.windows ?? [])
+      const midnight = Math.floor(atMs / 86400000) * 86400000, candidates = new Set()
+      const span = Math.max(9, Math.min(380, (entry.peakHolidays ?? peak.holidays ?? []).length + 8))
+      for (let day = -span; day <= span; day++) {
+        const start = midnight + day * 86400000
+        for (const hour of [0, 16, ...windows.flatMap(w => [w.start, w.end])]) candidates.add(start + hour * 3600000)
+      }
+      let previous = null, next = null
+      for (const time of candidates) {
+        if (configuredPeakAt(entry, time - 1, peak) === configuredPeakAt(entry, time, peak)) continue
+        if (time <= atMs && (previous === null || time > previous)) previous = time
+        if (time > atMs && (next === null || time < next)) next = time
+      }
+      if (previous === null || next === null) return null
+      return { inPeak: phase === 'peak', weekend: false, prevAtMs: previous, nextAtMs: next, nextIntoPeak: configuredPeakAt(entry, next, peak) === 'peak' }
+    }
+
     function priceMultiplierSettings(entry) {
       return Object.fromEntries(['multiplier', 'separateMultipliers', 'multipliers'].filter(key => entry?.[key] !== undefined).map(key => [key, entry[key]]))
     }
@@ -749,7 +815,7 @@
     function normalizeClientPrice(raw) {
       const base = normalizeClientTier(raw)
       if (base === undefined) return null
-      Object.assign(base, priceMultiplierSettings(raw))
+      Object.assign(base, priceMultiplierSettings(raw), peakScheduleSettings(raw))
       if (raw.billingMode === 'utc-peak') base.billingMode = 'utc-peak'
       if (raw.peakSchedule === 'volcengine') base.peakSchedule = 'volcengine'
       // 峰谷/历史子档必须随主档一起保留:usageSplit 回退计价与 Plan 拆分靠 tierFor
@@ -819,6 +885,8 @@
     function tierFor(entry, atMs, peak) {
       const base = priceAt(entry, atMs) ?? { cacheHit: 0, cacheMiss: 0, output: 0 }
       const asTier = (price, path = 'base') => ({ reasoning: 0, ...multipliedTier(price, base, path) })
+      const configured = configuredPeakAt(base, atMs, peak)
+      if (configured !== null) return configured === 'base' || !base[configured] ? asTier(base) : asTier(base[configured], configured)
       // Go 与 Ollama Cloud 按 UTC 工作日计峰谷(与 lib/pricing.js tierFor 同分支)。
       const ollama = base.peakSchedule === 'ollama'
       if (ollama || base.billingMode === 'utc-peak') {
@@ -912,46 +980,62 @@
     }
     /**
      * 模型名归一化(与 lib/pricing.js 的 canonModelId 同逻辑;bundle 无法导入,修改时两处同步):
-     * NFKC 全角/兼容字符归一化后转小写,仅去已知渠道附注 (go)/(zen),只保留 Unicode 字母数字——大小写/空格/横杠/点号等差异全部忽略。
+     * NFKC 后忽略大小写、空格、横杠、下划线与点号，保留路由、变体与括号结构。
      */
     function modelNameText(id) {
       return String(id ?? '').normalize('NFKC').toLowerCase().replace(/[(（]\s*(?:go|zen)\s*[)）]/g, ' ').trim()
     }
     function canonModelIdLocal(id) {
-      return modelNameText(id).replace(/[^\p{L}\p{N}]+/gu, '')
-    }
-    /**
-     * 模型名自动匹配(与 lib/pricing.js 的 matchModelId 同逻辑;bundle 无法导入,修改时两处同步)。
-     * 精确 → 归一化等价 → 去日期/版本后缀 → 安全后缀。
-     */
-    function stripIdDecor(id, snapshotTags = true, shortSnapshotTags = true) {
-      // Strip request decorations one at a time; candidate snapshots keep their identity.
-      const text = modelNameText(id)
-      if (snapshotTags && /[-_./:@](?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])$/.test(text)) return text.slice(0, -5)
-      if (snapshotTags && shortSnapshotTags && /[-_./:@]\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])$/.test(text)) return text.slice(0, -7)
-      return text.replace(/[-_./:@](?:\d{4}-?\d{2}-?\d{2}|v\d+(?:\.\d+)*|\d+k|latest)$/, '')
+      return modelNameText(id).replace(/[\s._\-\u2010-\u2015\u2212]+/gu, '')
     }
 
-    /** Exact IDs precede unique punctuation aliases and request-only safe decorations. */
-    function matchModelIdLocal(modelId, candidates, exactId = modelId, snapshotTags = true, shortSnapshotTags = true) {
+    function stripIdDecor(id, snapshotTags = true, shortSnapshotTags = true) {
+      // Versions and context sizes identify models. Only valid dates and latest are aliases.
+      const text = modelNameText(id)
+      const date = text.match(/[-_./:@](\d{4}-\d{2}-\d{2}|\d{8}|\d{6}|\d{4})$/)
+      if (date) {
+        const digits = date[1].replaceAll('-', '')
+        if (digits.length === 4 && !snapshotTags || digits.length === 6 && (!snapshotTags || !shortSnapshotTags)) return text
+        const year = digits.length === 4 ? 2000 : digits.length === 6 ? 2000 + Number(digits.slice(0, 2)) : Number(digits.slice(0, 4))
+        const month = Number(digits.slice(-4, -2)), day = Number(digits.slice(-2))
+        const parsed = new Date(Date.UTC(year, month - 1, day))
+        if (year >= 2000 && parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day) return text.slice(0, date.index)
+        return text
+      }
+      return text.replace(/[-_./:@]latest$/, '')
+    }
+
+    // Keep ambiguity and match rank so another catalog cannot hide a conflicting alias.
+    function modelIdMatch(modelId, candidates, exactId = modelId, snapshotTags = true, shortSnapshotTags = true) {
       if (typeof modelId !== 'string' || modelId.length === 0) return null
       const list = Array.isArray(candidates) ? candidates.filter(c => typeof c === 'string' && c.length > 0) : []
       const exact = list.find(c => c === exactId)
-      if (exact !== undefined) return exact
+      if (exact !== undefined) return { id: exact, rank: 3 }
       let target = modelId.normalize('NFKC').trim()
-      if (/[:(（]\s*(?:free|online)\b/i.test(target)) return null
+      let rank = 2
       for (;;) {
         const canon = canonModelIdLocal(target)
         if (canon.length === 0) return null
         const hits = list.filter(c => canonModelIdLocal(c) === canon)
-        if (hits.length > 0) return hits.length === 1 ? hits[0] : null
+        if (hits.length > 0) return { id: hits.length === 1 ? hits[0] : null, rank }
+        if (/[:(（]\s*(?:free|online)\b/i.test(target)) return null
         const stripped = stripIdDecor(target, snapshotTags, shortSnapshotTags)
         if (stripped === target.toLowerCase()) return null
         target = stripped
+        rank = 1
       }
     }
 
+    /** Exact IDs precede unique formatting aliases and request-only date tags. */
+    function matchModelIdLocal(modelId, candidates, exactId = modelId, snapshotTags = true, shortSnapshotTags = true) {
+      return modelIdMatch(modelId, candidates, exactId, snapshotTags, shortSnapshotTags)?.id ?? null
+    }
+
     const OPENDESIGN_PROVIDER_IDS = ['opendesign', 'open-design', 'open-design-api', 'amr-link.open-design.ai']
+    const FORWARDING_PROVIDER_IDS_LOCAL = [
+      'vercel', 'copilot', 'cline', 'qoder', 'qoder-cn', 'qoder-global', 'trae', 'trae-cn', 'trae-global',
+      'zcode', 'mimo-app', 'commandcode-plan', 'cursor', 'windsurf', 'augment', 'roo', 'codebuddy',
+    ]
     const SCOPED_PRICE_PROVIDERS = new Set(['openrouter', 'opencode-zen', 'opencode-go', 'opencode-go-plus', 'zen', 'opencode', ...OPENDESIGN_PROVIDER_IDS])
     const MODEL_VENDOR_PREFIXES = {
       openai: /^(?:gpt|o\d|codex)/i, anthropic: /^claude/i, google: /^gemini/i, stepfun: /^step-/i,
@@ -965,23 +1049,29 @@
     }
     // Full IDs win. Auto aliases may remove a known upstream namespace, never a routing variant.
     // Gemini API model resource names use models/{model}: https://ai.google.dev/api/models
-    function priceModelHit(modelId, models, provider, mode, prices) {
+    function priceModelMatch(modelId, models, provider, mode, prices) {
       if (typeof modelId !== 'string') return null
-      if (Object.hasOwn(models, modelId)) return modelId
+      if (Object.hasOwn(models, modelId)) return { id: modelId, rank: 3 }
       if (mode !== 'auto') return null
       let target = modelId.normalize('NFKC').trim().replace(/^models\/(?=gemini)/i, 'google/')
       const sep = target.search(/[/:]/)
       if (sep > 0) {
-        const vendor = target.slice(0, sep).trim().toLowerCase(), bare = target.slice(sep + 1).trim()
+        const namespace = target.slice(0, sep).trim().toLowerCase()
+        const vendor = namespace === 'deepseek-ai' ? 'deepseek' : namespace
+        const bare = target.slice(sep + 1).trim()
         if (Object.hasOwn(MODEL_VENDOR_PREFIXES, vendor)
-          && (vendor === provider || (provider === 'opencode-zen' || provider === 'opencode-go')
+          && (vendor === provider || ['opencode-zen', 'opencode-go', 'zen', 'opencode', 'opencode-go-plus'].includes(provider)
             && (MODEL_VENDOR_PREFIXES[vendor].test(bare)
               || matchModelIdLocal(bare, Object.keys(vendor === 'deepseek' ? prices?.models ?? {} : prices?.providers?.[vendor]?.models ?? {}), bare, prices?.snapshotTags !== false, prices?.shortSnapshotTags !== false) !== null))) target = bare
         else if (Object.hasOwn(MODEL_VENDOR_PREFIXES, vendor)) return null
       }
       // Formatting a request must not create a literal hit that bypasses alias collisions.
-      return matchModelIdLocal(target, Object.keys(models), modelId, prices?.snapshotTags !== false, prices?.shortSnapshotTags !== false)
+      return modelIdMatch(target, Object.keys(models), modelId, prices?.snapshotTags !== false, prices?.shortSnapshotTags !== false)
     }
+    function priceModelHit(modelId, models, provider, mode, prices) {
+      return priceModelMatch(modelId, models, provider, mode, prices)?.id ?? null
+    }
+
     /**
      * 客户端价格解析(与 pricing.js providerPriceEntryFor 同口径):手动覆盖 → 精确 → 自动匹配。
      * @returns { entry, priced, billingMode, matched }。
@@ -1007,7 +1097,7 @@
       return LOCAL_MODEL_PREFIXES.some(prefix => model.startsWith(prefix))
     }
     function legacyDeepseekOverride(provider, override, prices, mode) {
-      if (provider !== 'deepseek' && !provider.includes('deepseek')
+      if (!['deepseek', 'deepseek-official'].includes(provider)
         && typeof override === 'string' && override.length > 0 && override !== '__local__' && !override.includes(':')) {
         const dsModels = prices.models ?? {}
         const retryHit = Object.hasOwn(dsModels, override) ? override
@@ -1029,7 +1119,7 @@
       const override = overrides[provider + ':' + modelId]
       if (override === '__custom__') {
         const entry = prices.custom?.[provider + ':' + modelId]
-        return { entry: entry ?? null, priced: !!entry, billingMode: 'flat', matched: true, currency: entry?.currency ?? 'USD' }
+        return { entry: entry ?? null, priced: !!entry, billingMode: entry?.billingMode ?? 'flat', matched: true, currency: entry?.currency ?? 'USD' }
       }
       // 「本地模型(零消耗)」哨兵(与 pricing.js 同口径):覆盖目标 __local__ →
       // 未定价(token 照记、费用 0),matched=true 表示已人工指定。
@@ -1046,13 +1136,23 @@
           return { entry: prices.default ?? { cacheHit: 0, cacheMiss: 0, output: 0 }, priced: prices.default?.unpriced !== true, billingMode: 'deepseek-peak', matched: false }
         }
       }
-          if (['zen', 'opencode', 'opencode-go-plus'].includes(targetProvider)) {
-        const own = priceModelHit(targetModel, prices.providers?.[targetProvider]?.models ?? {}, 'opencode-go', mode, prices)
-        if (own === null) targetProvider = 'opencode-go'
-        else targetModel = own
+      // A channel's own price (including a disabled or ambiguous alias) wins over routing.
+      if (!isLocalOriginClient(targetProvider, targetModel) && targetProvider !== 'openrouter') {
+        const ownModels = prices.providers?.[targetProvider]?.models ?? {}
+        const own = priceModelMatch(targetModel, ownModels, targetProvider, mode, prices)
+        if (own) {
+          const entry = own.id === null ? null : ownModels[own.id]
+          return { entry, priced: entry != null && entry.unpriced !== true, billingMode: priceBillingMode(entry), matched: true }
+        }
       }
-      if (OPENDESIGN_PROVIDER_IDS.includes(targetProvider) && targetProvider !== 'opendesign'
-        && priceModelHit(targetModel, prices.providers?.[targetProvider]?.models ?? {}, targetProvider, mode, prices) === null) targetProvider = 'opendesign'
+      if (/(?:^|[-_])free(?:$|[-_])/.test(targetProvider)
+        && !['our-free-model', 'our-free-model-region'].includes(targetProvider)) return { entry: null, priced: false, billingMode: 'flat', matched: false }
+      if (targetProvider !== 'opencode-go' && PLAN_PROVIDER_ALIASES_LOCAL.go.includes(targetProvider)) {
+        return resolveClientPriceRaw('opencode-go', targetModel, { ...config, priceOverrides: {} })
+      }
+      if (OPENDESIGN_PROVIDER_IDS.includes(targetProvider) && targetProvider !== 'opendesign') {
+        return resolveClientPriceRaw('opendesign', targetModel, { ...config, priceOverrides: {} })
+      }
       // 本地推理来源零价守卫(与 pricing.js 同口径,置于覆盖之后、目录匹配之前)。
       if (isLocalOriginClient(targetProvider, targetModel)) {
         return { entry: null, priced: false, billingMode: 'flat', matched: false }
@@ -1062,12 +1162,12 @@
         const entry = Object.hasOwn(models, targetModel) ? models[targetModel] : null
         return { entry, priced: entry !== null && entry.unpriced !== true, billingMode: 'flat', matched: entry !== null }
       }
-      if (targetProvider === 'deepseek' || targetProvider.includes('deepseek')) {
+      if (['deepseek', 'deepseek-official'].includes(targetProvider)) {
         const models = prices.models ?? {}
-        const hit = priceModelHit(targetModel, models, 'deepseek', mode, prices)
-        if (hit !== null) return models[hit]?.unpriced === true
+        const match = priceModelMatch(targetModel, models, 'deepseek', mode, prices)
+        if (match) return match.id === null || models[match.id]?.unpriced === true
           ? { entry: null, priced: false, billingMode: 'flat', matched: true }
-          : { entry: models[hit], priced: true, billingMode: 'deepseek-peak', matched: true }
+          : { entry: models[match.id], priced: true, billingMode: 'deepseek-peak', matched: true }
         // 回退: provider 缺失/DeepSeek 但模型实际属于 Go 等其它目录时，避免
         // 误套 DeepSeek 默认低价(与 pricing.js 同口径，修复 Go 金额偏低)。
         if (mode === 'auto') {
@@ -1078,26 +1178,26 @@
           for (const [prov, table] of Object.entries(prices.providers ?? {})) {
             if (SCOPED_PRICE_PROVIDERS.has(prov)) continue
             const modelsCat = table?.models ?? {}
-            const h = priceModelHit(targetModel, modelsCat, prov, mode, prices)
-            if (h === null) continue
-            const score = +(h === targetModel || canonModelIdLocal(h) === canonModelIdLocal(targetModel))
+            const match = priceModelMatch(targetModel, modelsCat, prov, mode, prices)
+            if (!match) continue
+            const entry = match.id === null ? null : modelsCat[match.id]
+            const score = match.rank
             if (score > bestLen) {
-              bestEntry = modelsCat[h]; bestLen = score; ambiguous = false
+              bestEntry = entry; bestLen = score; ambiguous = match.id === null || entry == null
               // 与 pricing.js 同口径:命中条目自带峰谷模式时保留,否则客户端
               // 会按 flat 计与服务端入账不一致。
-              bestMode = priceBillingMode(modelsCat[h])
+              bestMode = priceBillingMode(entry)
             } else if (score === bestLen) ambiguous = true
           }
           if (ambiguous) return { entry: null, priced: false, billingMode: 'flat', matched: false }
           if (bestEntry !== null) return { entry: bestEntry, priced: bestEntry.unpriced !== true, billingMode: bestMode, matched: true }
         }
-        return { entry: prices.default ?? { cacheHit: 0, cacheMiss: 0, output: 0 }, priced: prices.default?.unpriced !== true, billingMode: 'deepseek-peak', matched: false }
+        return { entry: null, priced: false, billingMode: 'flat', matched: false }
       }
-      const catalog = prices.providers?.[targetProvider]?.models ?? {}
-      const hit = priceModelHit(targetModel, catalog, targetProvider, mode, prices)
-      if (hit !== null) return { entry: catalog[hit], priced: catalog[hit]?.unpriced !== true, billingMode: priceBillingMode(catalog[hit]), matched: true }
       if (SCOPED_PRICE_PROVIDERS.has(targetProvider)) return { entry: null, priced: false, billingMode: 'flat', matched: false }
-      if (Object.hasOwn(MODEL_VENDOR_PREFIXES, targetProvider)) return { entry: null, priced: false, billingMode: 'flat', matched: false }
+      const deepseekCompatible = mode === 'auto' && !override
+        && /^deepseek/i.test(modelNameText(targetModel).replace(/^deepseek(?:-ai)?[/:]\s*/, ''))
+      if (Object.hasOwn(MODEL_VENDOR_PREFIXES, targetProvider) && !deepseekCompatible) return { entry: null, priced: false, billingMode: 'flat', matched: false }
       // 跨厂商兑底(与 pricing.js 同口径):provider 未在价格表登记时按模型名全库查找。
       if (mode === 'auto') {
         let bestEntry = null
@@ -1107,12 +1207,17 @@
         for (const [prov, table] of [['deepseek', { models: prices.models ?? {} }], ...Object.entries(prices.providers ?? {})]) {
           if (prov === targetProvider || SCOPED_PRICE_PROVIDERS.has(prov)) continue
           const models = table?.models ?? {}
-          const h = priceModelHit(targetModel, models, prov, mode, prices)
-          if (h === null) continue
-          const score = +(h === targetModel || canonModelIdLocal(h) === canonModelIdLocal(targetModel))
+          const match = priceModelMatch(targetModel, models, prov, mode, prices)
+          if (!match) continue
+          const h = match.id
+          const entry = h === null ? null : models[h]
+          // 与 pricing.js 同口径：只处理 Mistral 转售 ID 与 DeepSeek 日期标签的冲突。
+          if (prov === 'mistral' && h?.startsWith('deepseek-') && h !== targetModel
+            && !targetProvider.includes('mistral') && !/^mistral[/:]/i.test(String(targetModel).trim())) continue
+          const score = match.rank
           if (score > bestLen) {
-            bestEntry = models[h]; bestLen = score; ambiguous = false
-            bestMode = prov === 'deepseek' ? 'deepseek-peak' : priceBillingMode(models[h]) // 与 pricing.js 同口径
+            bestEntry = entry; bestLen = score; ambiguous = h === null || entry == null
+            bestMode = prov === 'deepseek' ? 'deepseek-peak' : priceBillingMode(entry)
           } else if (score === bestLen) ambiguous = true
         }
         if (ambiguous) return { entry: null, priced: false, billingMode: 'flat', matched: false }
@@ -1124,7 +1229,52 @@
       // 与宿主计费口径保持一致,存量裸名配置自愈且不进未命中列表。
       return { entry: null, priced: false, billingMode: 'flat', matched: false }
     }
+    // Magpie keeps upstream/account prefixes in model IDs. Explicit assignments and full catalog IDs win.
+    function magpiePriceTarget(provider, modelId, prices, mode, overrides) {
+      const override = overrides?.[(provider || 'deepseek') + ':' + modelId]
+      if (!provider || mode === 'exact' || typeof modelId !== 'string'
+        || isLocalOriginClient(provider, modelId) || /(?:^|[-_])free(?:$|[-_])/.test(provider)
+        || typeof override === 'string' && override.length > 0
+        || priceModelMatch(modelId, prices?.providers?.[provider]?.models ?? {}, provider, 'auto', prices)) return null
+      const qualified = modelId.normalize('NFKC').trim()
+      const separator = qualified.indexOf('/')
+      if (separator <= 0 || separator === qualified.length - 1) return null
+      const route = qualified.slice(0, separator).trim().toLowerCase().replace(/^llm-/, '')
+      const model = qualified.slice(separator + 1).trim()
+      const aliases = { codex: 'openai', claude: 'anthropic', gemini: 'google', 'deepseek-ai': 'deepseek', 'deepseek-official': 'deepseek', 'ollama-cloud': 'ollama-cloud', volcengine: 'volcengine', ark: 'ark' }
+      const magpie = /^(?:dsh-)?magpie(?:$|-)/.test(provider)
+      const freeModelRoute = ['our-free-model', 'our-free-model-region'].includes(route)
+      const knownRoute = Object.hasOwn(aliases, route) || SCOPED_PRICE_PROVIDERS.has(route)
+        || Object.hasOwn(prices?.providers ?? {}, route) || Object.values(PLAN_PROVIDER_ALIASES_LOCAL).some(names => names.includes(route))
+        || FORWARDING_PROVIDER_IDS_LOCAL.includes(route) || freeModelRoute
+      if (!magpie && (!knownRoute || SCOPED_PRICE_PROVIDERS.has(provider) || PLAN_PROVIDER_ALIASES_LOCAL.go.includes(provider))) return null
+      // An unknown free-only route must not inherit a paid reference price.
+      if (/(?:^|[-_])free(?:$|[-_])/.test(route) && !freeModelRoute) return null
+      const upstream = Object.hasOwn(aliases, route) ? aliases[route] : PLAN_PROVIDER_ALIASES_LOCAL.go.includes(route) ? 'opencode-go' : route
+      if (!magpie && Object.hasOwn(MODEL_VENDOR_PREFIXES, provider) && Object.hasOwn(MODEL_VENDOR_PREFIXES, upstream)
+        && upstream !== provider && (upstream !== 'deepseek' || !/^deepseek/i.test(modelNameText(model)))) return null
+      if (Object.hasOwn(MODEL_VENDOR_PREFIXES, upstream)
+        && priceModelHit(model, upstream === 'deepseek' ? prices?.models ?? {} : prices?.providers?.[upstream]?.models ?? {}, upstream, 'auto', prices) === null) return null
+      return {
+        provider: knownRoute || Object.hasOwn(aliases, route) || SCOPED_PRICE_PROVIDERS.has(upstream)
+          || Object.hasOwn(MODEL_VENDOR_PREFIXES, upstream) || Object.hasOwn(prices?.providers ?? {}, upstream)
+          || isLocalOriginClient(upstream, model) ? upstream : provider,
+        model,
+      }
+    }
+
     function resolveClientPrice(provider, modelId, config) {
+      let source = String(provider ?? '').trim().toLowerCase().replace(/^llm-/, '') || 'deepseek'
+      const freeOverrides = Object.fromEntries(['our-free-model:*', 'our-free-model-region:*']
+        .filter(key => config?.priceOverrides?.[key] === '__free__').map(key => [key, '__free__']))
+      for (let depth = 0; depth < 8; depth++) {
+        const route = magpiePriceTarget(source, modelId, config?.prices, config?.priceMatch, config?.priceOverrides)
+        if (!route) break
+        provider = route.provider
+        source = route.provider
+        modelId = route.model
+        config = { ...config, priceOverrides: freeOverrides }
+      }
       let result = resolveClientPriceRaw(provider, modelId, config)
       const normalized = String(provider ?? '').trim().toLowerCase().replace(/^llm-/, '') || 'deepseek'
       if (!result.currency && !result.priced) {
@@ -1135,8 +1285,11 @@
           ? { ...result, entry: cnyPrice(result.entry), currency: 'CNY' }
           : { ...result, currency: result.priced && result.billingMode === 'deepseek-peak' && config?.prices?.currency === 'CNY' ? 'CNY' : 'USD' }
       }
+      result = withProviderPeakSchedule(result, normalized, config?.prices)
+      if (normalized === 'ollama-cloud' && config?.prices?.ollamaPeak !== false && result.entry && result.billingMode === 'deepseek-peak'
+        && (config?.prices?.ollamaTaggedPeak === false ? ['deepseek-v4.1-flash', 'deepseek-v4-pro'].includes(String(modelId).trim().toLowerCase()) : matchModelIdLocal(modelId, ['deepseek-v4.1-flash', 'deepseek-v4-pro']) !== null)) result = { ...result, entry: { ...result.entry, peakSchedule: result.entry.peakSchedule ?? 'ollama' } }
       return ['volcengine', 'ark'].includes(normalized) && config?.prices?.volcenginePeak !== false && result.entry && result.billingMode === 'deepseek-peak'
-        ? { ...result, entry: { ...result.entry, peakSchedule: 'volcengine' } } : result
+        ? { ...result, entry: { ...result.entry, peakSchedule: result.entry.peakSchedule ?? 'volcengine' } } : result
     }
     /** 投影 token 桶 → 按当前时刻档位计价的美元成本。 */
     /**
@@ -1194,8 +1347,8 @@
       // 以下别名来自 ChatGPT 订阅渠道的订阅线路(与 lib/plan-billing.js PLAN_PROVIDER_ALIASES 同步)。
       anthropic: ['anthropic', 'claude-subscription'],
       zai: ['zai', 'glm-coding-plan'],
-      minimax: ['minimax', 'minimax-code'],
-      kimi: ['kimi', 'kimi-code'],
+      minimax: ['minimax', 'minimax-code', 'minimax-m-plan', 'minimax-mplan', 'minimax-token-plan'],
+      kimi: ['kimi', 'kimi-code', 'kimi-coding', 'kimi-coding-plan'],
       commandcode: ['commandcode', 'command-code'],
       clinepass: ['clinepass', 'cline-pass'],
       workbuddy: ['workbuddy', 'workbuddy-subscription', 'workbuddy-ai', 'workbuddy-global', 'xdpool', 'xdpool-global'],
@@ -1203,7 +1356,7 @@
       stepfun: ['stepfun', 'step-code'],
       'volcengine-agent': ['volcengine-agent', 'ark-agent-plan', 'volcengine-agent-plan'],
       'tencent-coding': ['tencent-coding', 'tencent-coding-plan', 'tokenhub-coding-plan'],
-      'tencent-token': ['tencent-token', 'tencent-token-plan', 'tokenhub-token-plan'],
+      'tencent-token': ['tencent-token', 'tencent-token-plan', 'tokenhub-token-plan', 'tencent-hy-token-plan', 'tokenhub-hy-token-plan'],
       'baidu-coding': ['baidu-coding-plan', 'qianfan-coding-plan', 'baidu-token-plan', 'qianfan-token-plan', 'baidu-tokenplan', 'qianfan-tokenplan'],
 
       qwen: ['qwen', 'qwen-tokenplan', 'qianwen-tokenplan', 'qwen-token-plan', 'qianwen-token-plan'],
@@ -1225,8 +1378,8 @@
     const PLAN_NAME_MATCHERS_LOCAL = Object.entries(PLAN_NAME_HINTS_LOCAL).map(([id, hints]) => [id, new RegExp('(?:^|[^a-z0-9])(?:' + hints + ')(?=$|[^a-z0-9])')])
     function inferPlanProviderIdLocal(provider, modelId) {
       for (const raw of [provider, modelId]) {
-        const text = String(raw ?? '').normalize('NFKC').replace(/([a-zA-Z0-9\u3400-\u9fff])(?=(?:Coding|Token|Agent|Plan|Subscription))/g, '$1-').replace(/([a-z0-9])((?:coding|token|agent)?plan|subscription)$/i, '$1-$2').toLowerCase()
-        if (!/(?:^|[^a-z0-9])(?:(?:coding|token|agent)[-_\s]*)?plan(?:$|[^a-z0-9])|(?:^|[^a-z0-9])subscription(?:$|[^a-z0-9])|套餐|订阅/.test(text)) continue
+        const text = String(raw ?? '').normalize('NFKC').replace(/([a-zA-Z0-9\u3400-\u9fff])(?=(?:MPlan|Coding|Token|Agent|Plan|Subscription))/g, '$1-').replace(/([a-z0-9])((?:coding|token|agent|m)?plan|subscription)$/i, '$1-$2').toLowerCase()
+        if (!/(?:^|[^a-z0-9])(?:(?:coding|token|agent|m)[-_\s]*)?plan(?:$|[^a-z0-9])|(?:^|[^a-z0-9])subscription(?:$|[^a-z0-9])|套餐|订阅/.test(text)) continue
         const matches = PLAN_NAME_MATCHERS_LOCAL.filter(([, pattern]) => pattern.test(text))
         if (matches.length) {
           if (matches.length !== 1) return null
@@ -1241,6 +1394,44 @@
       }
       return null
     }
+    function routedPlanProviderLocal(provider, modelId) {
+      const name = String(provider ?? '').normalize('NFKC').trim().toLowerCase().replace(/^llm-/, '')
+      if (!name || typeof modelId !== 'string' || isLocalOriginClient(name, modelId)
+        || /(?:^|[-_])free(?:$|[-_])/.test(name) || name === 'opencode-zen'
+        || PLAN_PROVIDER_IDS_LOCAL.includes(name) || Object.values(PLAN_PROVIDER_ALIASES_LOCAL).some(aliases => aliases.includes(name))
+        || inferPlanProviderIdLocal(provider) !== null) return null
+      const parts = modelId.normalize('NFKC').trim().split('/').map(part => part.trim())
+      if (parts.some(part => !part)) return null
+      if (parts.slice(0, -1).some(part => /(?:^|[-_])free(?:$|[-_])/.test(part.toLowerCase())
+        || isLocalOriginClient(part.toLowerCase().replace(/^llm-/, ''), ''))
+        || isLocalOriginClient('', parts.at(-1))) return null
+      const magpie = /^(?:dsh-)?magpie(?:$|-)/.test(name)
+      const vendors = ['openai', 'google', 'deepseek', 'deepseek-ai', 'deepseek-official', 'moonshot', 'z-ai', 'xai', 'alibaba', 'tencent', 'xiaomi', 'upstage', 'nvidia', 'mistral', 'meta', 'meituan', 'gemini', 'claude', 'ollama-cloud', 'ark']
+      const namespaces = {
+        anthropic: { vendor: 'anthropic', model: /^claude/i },
+        minimax: { vendor: 'minimax', model: /^minimax/i },
+        stepfun: { vendor: 'stepfun', model: /^step-/i },
+        codex: { vendor: 'openai', model: /^(?:gpt|o\d|codex)/i },
+      }
+      for (let index = 0; index < Math.min(parts.length - 1, 8); index++) {
+        const route = parts[index].toLowerCase().replace(/^llm-/, '')
+        if (route === 'openrouter' || route === 'opencode-zen' || vendors.includes(route)
+          || /(?:^|[-_])free(?:$|[-_])/.test(route)
+          || isLocalOriginClient(route, parts.slice(index + 1).join('/'))) return null
+        const namespace = Object.hasOwn(namespaces, route) ? namespaces[route] : null
+        if (namespace) {
+          const remainder = parts.slice(index + 1)
+          if (remainder[0].toLowerCase() === namespace.vendor) remainder.shift()
+          if (remainder.length !== 1 || !namespace.model.test(remainder[0])) return null
+        }
+        for (const [id, aliases] of Object.entries(PLAN_PROVIDER_ALIASES_LOCAL)) {
+          if (aliases.includes(route) || id === route) return { id, provider: route }
+        }
+        if (PLAN_PROVIDER_IDS_LOCAL.includes(route)) return { id: route, provider: route }
+        if (!magpie && !FORWARDING_PROVIDER_IDS_LOCAL.includes(route)) return null
+      }
+      return null
+    }
     function planProviderIdOfLocal(provider, config, modelId) {
       const name = String(provider ?? '').trim().toLowerCase().replace(/^llm-/, '')
       const assigned = config?.planBilling?.modelPlans?.[provider + ':' + modelId] ?? config?.planBilling?.modelPlans?.[name + ':' + modelId]
@@ -1249,7 +1440,12 @@
       for (const [id, aliases] of Object.entries(PLAN_PROVIDER_ALIASES_LOCAL)) {
         if (aliases.includes(name)) return id
       }
-      return PLAN_PROVIDER_IDS_LOCAL.includes(name) ? name : inferPlanProviderIdLocal(provider, modelId)
+      if (PLAN_PROVIDER_IDS_LOCAL.includes(name)) return name
+      const inferred = inferPlanProviderIdLocal(provider)
+      if (inferred !== null) return inferred
+      if (isLocalOriginClient(name, modelId) || /(?:^|[-_])free(?:$|[-_])/.test(name) || name === 'opencode-zen') return null
+      if (typeof modelId === 'string' && modelId.normalize('NFKC').includes('/')) return routedPlanProviderLocal(provider, modelId)?.id ?? null
+      return inferPlanProviderIdLocal(provider, modelId)
     }
     function enabledPlanSetOfLocal(config) {
       if (Array.isArray(config?.planBilling?.autoProviders)) return new Set(config.planBilling.autoProviders)
@@ -1301,7 +1497,11 @@
         if (configured === 'plan' || configured === 'api') return configured
       }
       if (planId === null) return 'api'
-      if (planId === 'go' && /^(?:llm-)?(?:dsh-opencode-go|opencode-go(?:-plus)?)$/i.test(String(provider).trim())) return 'plan'
+      const route = routedPlanProviderLocal(provider, modelId)
+      const subscriptionProvider = route?.id === planId ? route.provider : provider
+      if (planId === 'go' && /^(?:llm-)?(?:dsh-opencode-go|opencode-go(?:-plus)?)$/i.test(String(subscriptionProvider).trim())) return 'plan'
+      if (planId === 'kimi' && /^(?:llm-)?kimi-coding(?:-plan)?$/i.test(String(subscriptionProvider).trim())) return 'plan'
+      if (planId === 'minimax' && /^(?:llm-)?minimax-(?:m-?plan|token-plan)$/i.test(String(subscriptionProvider).trim())) return 'plan'
       return enabledPlanSetOfLocal(config).has(planId) ? 'plan' : 'api'
     }
     /**
@@ -1332,7 +1532,7 @@
           // providerPriceEntryFor 的 peakSchedule 标记同口径(trim、小写、剥离 llm- 前缀)。
           if (entry && resolved.billingMode === 'deepseek-peak' && config.prices?.ollamaPeak !== false
             && provider.trim().toLowerCase().replace(/^llm-/, '') === 'ollama-cloud'
-            && (config.prices?.ollamaTaggedPeak === false ? ['deepseek-v4.1-flash', 'deepseek-v4-pro'].includes(modelId.trim().toLowerCase()) : matchModelIdLocal(modelId, ['deepseek-v4.1-flash', 'deepseek-v4-pro']) !== null)) entry.peakSchedule = 'ollama'
+            && (config.prices?.ollamaTaggedPeak === false ? ['deepseek-v4.1-flash', 'deepseek-v4-pro'].includes(modelId.trim().toLowerCase()) : matchModelIdLocal(modelId, ['deepseek-v4.1-flash', 'deepseek-v4-pro']) !== null)) entry.peakSchedule ??= 'ollama'
           const c = costOfBuckets(byModel[providerKey], tierFor(entry, now, { ...peak, enabled: ['deepseek-peak', 'utc-peak'].includes(resolved.billingMode) && peak.enabled }))
           const billed = usdFromCostLocal(c, resolved.currency, cnyRate)
           total += billed
@@ -1555,13 +1755,17 @@
         el('path', { d: 'M8 2.8A1.3 1.3 0 1 0 8 5.4A1.3 1.3 0 1 0 8 2.8Z', fill: 'currentColor' }))
     }
 
-    // ── 会话费用徽章(dock / header) ────────────────────────────────────────
+    function costDetailsLabel(en) {
+      return en ? 'Conversation cost details' : '本会话费用明细'
+    }
+
+    // ── 会话费用状态/金额拆分与投影联动刷新 ──────────────────────────────
 
     // 投影联动刷新(今日费用实时化):costUsage 投影由宿主在每次 usage 入账时
     // 推送,是「本次调用已结束入账」的实时信号。据此触发一次 800ms 防抖的
     // getState,侧边栏「今日费用」从最坏 60s 轮询缩短到流结束后 ≈1s;60s 轮询
-    // 保留作兜底(跨会话/后台标签页场景)。挂在会话徽章(dock/header)与侧边栏
-    // 页脚三处,覆盖 position=off 等配置组合;投影不可用时静默退化。
+    // 保留作兜底(跨会话/后台标签页场景)。挂在输入区费用入口与侧边栏页脚两处;
+    // 投影不可用时静默退化。
     // hooks 规则:必须在组件早退 return 之前调用(与 useProjection 同位)。
     function useProjectionRefresh(props, usage) {
       const primedRef = useRef(false)
@@ -1710,78 +1914,94 @@
                 call.rows.map(rowView))))))
     }
 
-    function SessionCost(props) {
-      const state = useSessionUsage(props), { usage, config } = state
-      if (!config) return null
-      const status = sessionCostStatus(state)
-      if (status) return el('div', { className: 'cm-chip' }, status)
-      const t = makeT(resolveLocale(config))
-      const { cost, planPart } = sessionCostParts(usage, config)
-      const detail = [
-        t('sessionCostTitle'),
-        t('sessionDetailTokens', {
-          input: formatTokens(usage?.input ?? 0),
-          cache: formatTokens((usage?.cacheRead ?? 0) + (usage?.cacheWrite ?? 0)),
-          output: formatTokens(usage?.output ?? 0),
-        }),
-        t('sessionDetailCache', {
-          read: formatTokens(usage?.cacheRead ?? 0),
-          write: formatTokens(usage?.cacheWrite ?? 0),
-        }),
-        t('cost', { amount: formatMoneyUsd(cost, config) }),
-        ...(planPart > 0 ? [t('sessionDetailPlan', { amount: formatMoneyUsd(planPart, config) })] : []),
-        modelCostDetail(usage, config),
-      ].filter(Boolean).join('; ')
-      return el(Tooltip, { portal: true, label: detail, side: 'top', delayMs: 500 },
-        el('div', { className: 'cm-chip' }, planPart > 0
-          ? t('costChipPlan', { amount: formatMoneyUsd(cost, config) })
-          : t('cost', { amount: formatMoneyUsd(cost, config) })))
-    }
-
+    /**
+     * 输入区下方的会话费用入口:沿用官方 StatsPills 的按钮样式,货币符号紧随金额标签、位于数值前。
+     * 金额与命中率/
+     * 输入/缓存/输出分项用 · 分隔、整行可点击打开费用明细弹窗;悬停提示保留完整分项与模型金额;
+     * 「仅显示金额」开启时只保留金额段(与 master 的呈现一致)。
+     */
     function DockLine(props) {
-      const state = useSessionUsage(props), { usage, config } = state
-      if (!config) return null
-      const status = sessionCostStatus(state)
-      if (status) return el('div', { className: 'cm-root', role: 'status', title: status }, status)
-      const input = usage.input ?? 0
-      const cache = (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0)
-      const output = usage.output ?? 0
+      const snapshot = props.useCost?.(s => s), state = useSessionUsage(props), { usage, config } = state
+      const [openedId, setOpenedId] = useState(null)
+      const hidden = props.entryPosition !== 'header' && config?.hideSessionCostDock === true
+      const open = !hidden && !!props.sessionId && openedId === props.sessionId
+      useEffect(() => { setOpenedId(null) }, [props.sessionId, hidden])
+      if (hidden || !props.sessionId) return null
+      const en = resolveLocale(config) === 'en'
       const t = makeT(resolveLocale(config))
-      const { cost, planPart } = sessionCostParts(usage, config)
-      // 缓存写入属于输入分母，但不是缓存命中；无输入时显示未知。
-      const hitRate = billedInput(usage) > 0 ? ((usage.cacheRead ?? 0) / billedInput(usage) * 100).toFixed(1) + '%' : '—'
+      const status = config ? sessionCostStatus(state) : snapshot?.error || (en ? 'Loading…' : '加载中…')
+      // 明细弹窗要完整的费用状态(store state),不是 useSessionUsage 的合并结果:
+      // 统计页会读取 state.meta/today/total 等字段,形状不符会在渲染时抛错并把整行卸载。
+      // 状态行也挂同一弹窗(open=false 不渲染),会话切换时旧弹窗随 open 一起关闭。
+      const dialog = el(CostDetailsDialog, { open, onClose: () => setOpenedId(null), sessionId: props.sessionId, state: snapshot?.state, error: snapshot?.error, api: props.api })
+      // 账本尚未就绪/无记录/不可用保持非交互状态行(与 master 一致,role=status 供读屏播报);
+      // 没有 store 状态的加载/错误仍保留可点击入口,以便弹窗内重试。
+      if (config && status) return el(Fragment, null,
+        el('span', { className: 'cm-dp-status', role: 'status', title: status }, status), dialog)
+      // 恢复会话时投影可能先于配置到达;此时只显示加载/错误提示，避免渲染异常使宿主停用入口。
+      const { cost, planPart } = usage && config ? sessionCostParts(usage, config) : { cost: 0, planPart: 0 }
       const values = {
         amount: formatMoneyUsd(cost, config),
         planAmount: formatMoneyUsd(planPart, config),
-        hitRate,
-        input: formatTokens(input),
-        cache: formatTokens(cache),
-        output: formatTokens(output),
+        hitRate: billedInput(usage) > 0 ? ((usage?.cacheRead ?? 0) / billedInput(usage) * 100).toFixed(1) + '%' : '—',
+        input: formatTokens(usage?.input ?? 0),
+        cache: formatTokens((usage?.cacheRead ?? 0) + (usage?.cacheWrite ?? 0)),
+        output: formatTokens(usage?.output ?? 0),
       }
-      const fullLine = t(planPart > 0 ? 'sessionLineSplit' : 'sessionLine', values)
-      const modelDetail = modelCostDetail(usage, config)
-      const compact = config.sessionCostCompact === true
-      // Keep the amount visible when native or peer-plugin statistics grow.
-      // Token and Plan details may truncate; the full line remains on hover.
-      const amount = t('sessionLineCompact', values)
-      const line = compact ? t(planPart > 0 ? 'sessionLineSplitCompact' : 'sessionLineCompact', values) : fullLine
-      return el('div', { className: 'cm-root cm-session-cost', title: [fullLine, modelDetail].filter(Boolean).join('; ') },
-        el('span', { className: 'cm-session-amount' }, amount),
-        el('span', { className: 'cm-session-detail' }, line.slice(amount.length)))
+      const fullLine = config ? t(planPart > 0 ? 'sessionLineSplit' : 'sessionLine', values) : status
+      const modelDetail = config ? modelCostDetail(usage, config) : ''
+      const label = costDetailsLabel(en)
+      const compact = props.entryPosition === 'header' || config?.sessionCostCompact === true
+      const lineKey = compact
+        ? (planPart > 0 ? 'sessionLineSplitCompact' : 'sessionLineCompact')
+        : (planPart > 0 ? 'sessionLineSplit' : 'sessionLine')
+      const labelText = status || t(lineKey, values)
+      // 悬停/聚焦时预取统计页(并入 client 页缓存),避免首次点击弹窗先出现骨架屏。
+      const warm = () => warmPage(props.api?.loadStatistics, { state: snapshot?.state, sessionId: props.sessionId })
+      // 悬停详情走宿主官方 Tooltip(与官方统计 pill 一致的黑色气泡),不再用浏览器原生 title。
+      return el(Fragment, null,
+        el(Tooltip, { portal: true, label: [fullLine, config?.includeSubagentCost ? (en ? 'Includes subagents' : '含子代理') : (en ? 'Main session only' : '仅主会话'), modelDetail].filter(Boolean).join('; '), side: 'top' },
+          el('button', { type: 'button', className: 'cm-dp' + (props.entryPosition === 'header' ? ' cm-dp-header' : ''), 'aria-label': label, 'aria-haspopup': 'dialog', 'aria-expanded': open, onMouseEnter: warm, onFocus: warm, onClick: () => setOpenedId(props.sessionId) },
+            el('span', { className: 'cm-dl' }, labelText))),
+        dialog)
     }
 
     // ── 侧边栏:余额行 + 预算图框/今日徽章(纵向堆叠,位于设置按钮上方) ──────
 
-    /** 记账币种代码 → 符号(官方/自定义余额金额不经汇率换算,符号必须与数值同币种)。 */
-    const BALANCE_CURRENCY_SYMBOLS = { USD: '$', CNY: '¥', EUR: '€' }
+    /**
+     * 记账币种代码 → 符号。符号必须能唯一指认币种:美元系用 HK$/A$/C$/NZ$/MX$/S$,
+     * 日元用 JP¥ 与人民币 ¥ 区分,北欧克朗拆成 kr/NKr/Dkr。与 lib/currency-catalog.js
+     * 同一张表(test/currency-catalog.mjs 断言两边一致),bundle 无法导入宿主模块。
+     */
+    const BALANCE_CURRENCY_SYMBOLS = {
+      CNY: '¥', USD: '$', EUR: '€', GBP: '£', JPY: 'JP¥', KRW: '₩', INR: '₹', HKD: 'HK$', SGD: 'S$', AUD: 'A$',
+      CAD: 'C$', CHF: 'CHF', NZD: 'NZ$', BRL: 'R$', MXN: 'MX$', ZAR: 'R', TRY: '₺', SEK: 'kr', NOK: 'NKr',
+      DKK: 'Dkr', PLN: 'zł', THB: '฿', IDR: 'Rp', MYR: 'RM', PHP: '₱', ILS: '₪',
+    }
+    function balanceSymbolOf(config, code) {
+      const fallback = config?.symbol || '$'
+      return !code || code === config?.currency ? fallback : BALANCE_CURRENCY_SYMBOLS[code] ?? code + ' '
+    }
+
+    /**
+     * 余额展示:native(原币种)/ display(显示币种)/ 指定目录代码,按当前参考汇率换算。
+     * 'native' 和未知选择没有汇率条目,与缺汇率一样保留源币种——否则会再现
+     * 「¥53 渲染成 $53」的符号错位。
+     */
+    function balanceShown(value, config, source) {
+      const choice = config?.balance?.currency
+      const target = (choice === 'display' ? config?.currency : choice) ?? source
+      const rates = config?.fxRates
+      return target !== source && rates?.[source] > 0 && rates?.[target] > 0
+        ? [value / rates[source] * rates[target], target]
+        : [value, source]
+    }
 
     function formatBalanceMoney(value, config, currency) {
-      // 余额是官方接口返回的记账币种金额(如 CNY),不经过汇率换算;
-      // 此前恒用显示币种符号(¥53 渲染成 $53),数值未换算而符号错位近汇率倍。
-      const code = typeof currency === 'string' ? currency.toUpperCase() : ''
-      const fallbackSymbol = typeof config?.symbol === 'string' && config.symbol.length > 0 ? config.symbol : '$'
-      return formatMoneyValue(value, {
-        symbol: BALANCE_CURRENCY_SYMBOLS[code] ?? fallbackSymbol,
+      const source = typeof currency === 'string' ? currency.toUpperCase() : ''
+      const [amount, code] = balanceShown(value, config, source)
+      return formatMoneyValue(amount, {
+        symbol: balanceSymbolOf(config, code),
         decimals: Math.max(2, Math.min(10, Math.floor(Number(config?.decimals) || 2))),
       })
     }
@@ -1822,7 +2042,9 @@
       if (unit === 'USD') return usd
       // 积分不能由美元花费换算。
       if (unit === 'CREDITS') return 0
-      const rate = Number(config?.exchangeRate)
+      // 今日用量要落在余额的记账币种上,与 remaining/cap 同单位;fxRates 缺省时
+      // 才退回旧的展示汇率(旧配置/部分快照),否则进度比例会错。
+      const rate = Number(config?.fxRates?.[unit] ?? config?.exchangeRate)
       return usd * (Number.isFinite(rate) && rate > 0 ? rate : 1)
     }
 
@@ -1914,7 +2136,7 @@
     function clickRefreshTipLines(t, refresh) {
       const lines = [t('clickToRefresh')]
       if (refresh.busy) lines.push(t('refreshing'))
-      if (refresh.err) lines.push('⚠ ' + t('balanceRefreshFailed', { message: refresh.err }))
+      if (refresh.err) lines.push('⚠ ' + t('queryFailed') + ': ' + refresh.err)
       return lines
     }
 
@@ -1938,21 +2160,50 @@
         el('path', { d: 'M8 4H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-4M11 3h6v6M9 11l8-8' })))
     }
 
+    const balancePrivacy = makeStore({})
+    function useBalancePrivacy(config, id, t) {
+      const read = () => {
+        const current = balancePrivacy.getSnapshot()[id]
+        if (current !== undefined) return current
+        try { return window.localStorage?.getItem('cm.balance.hidden.' + id) === '1' } catch { return false }
+      }
+      const [value, setValue] = useState(read)
+      useEffect(() => {
+        const update = () => setValue(read())
+        const dispose = balancePrivacy.subscribe(update)
+        update()
+        return dispose
+      }, [id])
+      const enabled = config.balance?.quickHide === true, hidden = enabled && value
+      const toggle = event => {
+        event.stopPropagation()
+        const next = !read()
+        try { window.localStorage?.setItem('cm.balance.hidden.' + id, next ? '1' : '0') } catch {}
+        balancePrivacy.set({ ...balancePrivacy.getSnapshot(), [id]: next })
+        setValue(next)
+      }
+      return { hidden, label: caption => enabled ? el('span', { role: 'button', tabIndex: 0, 'aria-pressed': hidden, title: t('balanceToggle'), onClick: toggle,
+        onKeyDown: event => { event.stopPropagation(); if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle(event) } } }, caption) : caption,
+        tip: [t('balanceHidden'), t('balanceToggle')].join(' · ') }
+    }
+
     function BalanceRowContent(props) {
       const { state, wide, api } = props
       const balance = state.balance
       const t = makeT(resolveLocale(state.config))
       const refresh = useClickRefresh(api ? () => api.refreshBalance() : null)
+      const privacy = useBalancePrivacy(state.config, props.accountId ?? 'official', t)
+      const caption = props.label ?? balanceLabel(t, state.config)
       if (!balance || balance.status === 'off') return null
       if (balance.status === 'error') {
         return el(Tooltip, { portal: true, label: [t('balanceQueryFailed', { message: balance.message || t('unknownError') }), ...clickRefreshTipLines(t, refresh)].join('; '), side: 'right', delayMs: 300 },
           el('div', { 'data-cm-display': 'balance', className: 'cm-foot clickable' + (wide ? '' : ' cm-foot-rail') + ' cm-bal-err' + (refresh.busy ? ' busy' : ''), ...clickableRefreshProps(refresh.busy, refresh.run) },
-            wide ? el(Fragment, null, balanceLabel(t, state.config), ' ', el('span', { className: 'cm-num' }, t('queryFailed'))) : '⚠'))
+            wide ? el(Fragment, null, caption, ' ', el('span', { className: 'cm-num' }, t('queryFailed'))) : '⚠'))
       }
-      const detail = officialBalanceTooltip(t, balance, state.config, state.reconcile, refresh)
-      return el(Tooltip, { portal: true, label: detail, side: 'right', delayMs: 300 },
+      const detail = privacy.hidden ? privacy.tip : officialBalanceTooltip(t, balance, state.config, state.reconcile, refresh)
+      return el(Tooltip, { portal: true, label: props.label ? el(Fragment, null, el('strong', null, props.label), detail) : detail, side: 'right', delayMs: 300 },
         el('div', { 'data-cm-display': 'balance', className: 'cm-foot clickable' + (wide ? '' : ' cm-foot-rail') + (refresh.busy ? ' busy' : ''), ...clickableRefreshProps(refresh.busy, refresh.run) },
-          wide ? el(Fragment, null, el('span', { className: 'cm-balance-name' }, balanceLabel(t, state.config), rechargeLinkEl(t)), el('span', { className: 'cm-num cm-bal-amt' }, formatBalanceMoney(balance.totalBalance, state.config, balance.currency)), state.reconcile?.ok === false ? ' ⚠' : '') : el(WalletIcon, { size: 16 })))
+          wide ? el(Fragment, null, el('span', { className: 'cm-balance-name' }, privacy.label(caption), rechargeLinkEl(t)), el('span', { className: 'cm-num cm-bal-amt' }, privacy.hidden ? '••••' : formatBalanceMoney(balance.totalBalance, state.config, balance.currency)), state.reconcile?.ok === false ? ' ⚠' : '') : el(WalletIcon, { size: 16 })))
     }
 
     function officialBalanceVisible(state, provider, preview) {
@@ -1977,18 +2228,19 @@
       const balance = state.balance
       const t = makeT(resolveLocale(config))
       const refresh = useClickRefresh(api ? () => api.refreshBalance() : null)
+      const privacy = useBalancePrivacy(config, 'official', t)
       if (!balance || balance.status !== 'ok') return null
       const segments = segmentsForOfficialBalance(state, config)
-      const remaining = formatBalanceMoney(balance.totalBalance, config, balance.currency)
-      const detail = officialBalanceTooltip(t, balance, config, state.reconcile, refresh)
+      const remaining = privacy.hidden ? '••••' : formatBalanceMoney(balance.totalBalance, config, balance.currency)
+      const detail = privacy.hidden ? privacy.tip : officialBalanceTooltip(t, balance, config, state.reconcile, refresh)
       const body = el(Fragment, null,
         el('div', { className: 'cm-bbox-head' },
-          el('span', { className: 'cm-balance-name' }, el('span', { className: 'cm-bbox-label' }, balanceLabel(t, config)), rechargeLinkEl(t)),
+          el('span', { className: 'cm-balance-name' }, el('span', { className: 'cm-bbox-label' }, privacy.label(balanceLabel(t, config))), rechargeLinkEl(t)),
           el('span', { className: 'cm-bbox-pct cm-num cm-bal-amt' }, remaining)),
-        el(BalanceBar, { segments, direction: barDirectionOf(config, 'balance') }))
+        privacy.hidden ? null : el(BalanceBar, { segments, direction: barDirectionOf(config, 'balance') }))
       return el(Tooltip, { portal: true, label: detail, side: 'right', delayMs: 300 },
         el('div', { 'data-cm-display': 'balance', className: 'cm-bbox clickable' + (wide ? '' : ' rail') + (refresh.busy ? ' busy' : ''), ...clickableRefreshProps(refresh.busy, refresh.run) },
-          wide ? body : el('div', { className: 'cm-bbox-rail cm-num' }, Math.round(segments.remainingPct) + '%')))
+          wide ? body : el('div', { className: 'cm-bbox-rail cm-num' }, privacy.hidden ? '••••' : Math.round(segments.remainingPct) + '%')))
     }
 
     function resolveCustomBalanceLabel(cfg, locale) {
@@ -2012,16 +2264,18 @@
       const unit = customBalanceUnitOf(config, custom, entryCfg)
       const value = Number(amount)
       if (!Number.isFinite(value)) return '—'
-      // 仅在显示层换算，快照、预算单位和进度比例始终保留源币种。
+      const decimals = Math.max(2, Math.min(6, Math.floor(Number(config?.decimals) || 4)))
+      // 仅显示层换算:快照、预算单位和进度比例始终保留源币种。积分没有汇率。
+      if (unit === 'CREDITS') return fixedAmount(value, decimals) + ' Credits'
+      // 旧单条开关(仅 USD):全局「余额显示币种」为原币种时沿用旧折算与配置精度。
       const rate = config?.currency === 'USD' ? 1 : Number(config?.exchangeRate)
-      if ((entryCfg ?? config?.customBalance)?.convertToDisplayCurrency === true && unit === 'USD' && Number.isFinite(rate) && rate > 0) {
+      const legacy = (entryCfg ?? config?.customBalance)?.convertToDisplayCurrency === true && unit === 'USD' && (config?.balance?.currency ?? 'native') === 'native'
+      if (legacy && rate > 0 && Number.isFinite(rate)) {
         const converted = value * rate
         return Number.isFinite(converted) ? formatMoneyValue(converted, config) : '—'
       }
-      const credits = unit === 'CREDITS'
-      const decimals = Math.max(2, Math.min(6, Math.floor(Number(config?.decimals) || 4)))
-      const symbol = credits ? '' : unit === 'CNY' ? '¥' : unit === 'EUR' ? '€' : '$'
-      return symbol + fixedAmount(value, decimals) + (credits ? ' Credits' : '')
+      const [shown, code] = balanceShown(value, config, unit)
+      return Number.isFinite(shown) ? formatMoneyValue(shown, { symbol: balanceSymbolOf(config, code), decimals }) : '—'
     }
 
     // 多配置形态(v1.7.0,issue #79):以下四个渲染助手按「单条快照 + 单条配置」
@@ -2054,18 +2308,18 @@
       return capLine ? base + ' · ' + capLine : base
     }
 
-    function customBalanceBoxBody(state, config, t, custom, entryCfg) {
+    function customBalanceBoxBody(state, config, t, custom, entryCfg, privacy) {
       const label = resolveCustomBalanceLabel(entryCfg ?? config.customBalance ?? {}, resolveLocale(config))
-      const remaining = formatCustomBalanceMoney(custom.remaining, config, custom, entryCfg)
+      const remaining = privacy?.hidden ? '••••' : formatCustomBalanceMoney(custom.remaining, config, custom, entryCfg)
       const segments = segmentsForCustomBalance(state, config, custom, entryCfg)
       return {
         level: 'ok',
-        rail: Math.round(segments.remainingPct) + '%',
+        rail: privacy?.hidden ? '••••' : Math.round(segments.remainingPct) + '%',
         body: el(Fragment, null,
           el('div', { className: 'cm-bbox-head' },
-            el('span', { className: 'cm-balance-name' }, el('span', { className: 'cm-bbox-label' }, label), rechargeLinkEl(t, entryCfg?.dashboardUrl || '', label)),
+            el('span', { className: 'cm-balance-name' }, el('span', { className: 'cm-bbox-label' }, privacy ? privacy.label(label) : label), rechargeLinkEl(t, entryCfg?.dashboardUrl || '', label)),
             el('span', { className: 'cm-bbox-pct cm-num cm-bal-amt' }, remaining)),
-          el(BalanceBar, { segments, direction: barDirectionOf(config, 'balance') })),
+          privacy?.hidden ? null : el(BalanceBar, { segments, direction: barDirectionOf(config, 'balance') })),
       }
     }
 
@@ -2105,11 +2359,12 @@
     function CustomBalanceEntryBox(props) {
       const { state, wide, api, t, index, entry, snapshot } = props
       const config = state.config
+      const privacy = useBalancePrivacy(config, 'custom-' + index, t)
+      const refresh = useClickRefresh(api ? () => api.refreshCustomBalance(index) : null)
       // 无快照(尚未查询)不渲染图框;error/off 状态由行组件渲染提示。
       if (snapshot === null || snapshot === undefined || snapshot.status !== 'ok') return null
-      const refresh = useClickRefresh(api ? () => api.refreshCustomBalance(index) : null)
-      const view = customBalanceBoxBody(state, config, t, snapshot, entry)
-      const detail = [customBalanceDetailText(snapshot, config, t, state, entry), ...clickRefreshTipLines(t, refresh)].join(' · ')
+      const view = customBalanceBoxBody(state, config, t, snapshot, entry, privacy)
+      const detail = privacy.hidden ? privacy.tip : [customBalanceDetailText(snapshot, config, t, state, entry), ...clickRefreshTipLines(t, refresh)].join(' · ')
       return el(Tooltip, { portal: true, label: detail, side: 'right', delayMs: 300 },
         el('div', { 'data-cm-display': 'customBalance', className: 'cm-bbox clickable' + (view.level === 'ok' ? '' : ' ' + view.level) + (wide ? '' : ' rail') + (refresh.busy ? ' busy' : ''), ...clickableRefreshProps(refresh.busy, refresh.run) },
           wide ? view.body : el('div', { className: 'cm-bbox-rail cm-num' }, view.rail)))
@@ -2128,20 +2383,21 @@
     function CustomBalanceEntryRow(props) {
       const { state, wide, api, t, index, entry, snapshot } = props
       const config = state.config
+      const privacy = useBalancePrivacy(config, 'custom-' + index, t)
       const custom = snapshot ?? emptyCustomSnapshot(index)
-      if (custom.status === 'off') return null
       const refresh = useClickRefresh(api ? () => api.refreshCustomBalance(index) : null)
+      if (custom.status === 'off') return null
       const label = resolveCustomBalanceLabel(entry ?? config.customBalance ?? {}, resolveLocale(config))
       if (custom.status === 'error') {
         return el(Tooltip, { portal: true, label: [custom.message || t('unknownError'), ...clickRefreshTipLines(t, refresh)].join('; '), side: 'right', delayMs: 300 },
           el('div', { 'data-cm-display': 'customBalance', className: 'cm-foot clickable' + (wide ? '' : ' cm-foot-rail') + ' cm-bal-err' + (refresh.busy ? ' busy' : ''), ...clickableRefreshProps(refresh.busy, refresh.run) },
             wide ? el(Fragment, null, el('span', { className: 'cm-balance-name' }, el('span', { className: 'cm-bal-label', title: label }, label), rechargeLinkEl(t, entry?.dashboardUrl || '', label)), el('span', { className: 'cm-num cm-bal-amt' }, t('queryFailed'))) : '⚠'))
       }
-      const amount = formatCustomBalanceMoney(custom.remaining, config, custom, entry)
-      const detail = [customBalanceDetailText(custom, config, t, state, entry), ...clickRefreshTipLines(t, refresh)].join(' · ')
+      const amount = privacy.hidden ? '••••' : formatCustomBalanceMoney(custom.remaining, config, custom, entry)
+      const detail = privacy.hidden ? privacy.tip : [customBalanceDetailText(custom, config, t, state, entry), ...clickRefreshTipLines(t, refresh)].join(' · ')
       return el(Tooltip, { portal: true, label: detail, side: 'right', delayMs: 300 },
         el('div', { 'data-cm-display': 'customBalance', className: 'cm-foot clickable' + (wide ? '' : ' cm-foot-rail') + (refresh.busy ? ' busy' : ''), ...clickableRefreshProps(refresh.busy, refresh.run) },
-          wide ? el(Fragment, null, el('span', { className: 'cm-balance-name' }, el('span', { className: 'cm-bal-label', title: label }, label), rechargeLinkEl(t, entry?.dashboardUrl || '', label)), el('span', { className: 'cm-num cm-bal-amt' }, amount)) : el(WalletIcon, { size: 16 })))
+          wide ? el(Fragment, null, el('span', { className: 'cm-balance-name' }, el('span', { className: 'cm-bal-label', title: label }, privacy.label(label)), rechargeLinkEl(t, entry?.dashboardUrl || '', label)), el('span', { className: 'cm-num cm-bal-amt' }, amount)) : el(WalletIcon, { size: 16 })))
     }
 
     function CornerChips(props) {
@@ -2273,6 +2529,10 @@
 
     function peakPhaseForConfig(config, now) {
       const provider = String(config?.peakProvider ?? '').trim().toLowerCase().replace(/^llm-/, '')
+      const table = config?.prices?.providers?.[provider] ?? (['deepseek-official', 'deepseek-account', ''].includes(provider) ? config?.prices?.providers?.deepseek : undefined)
+      const entry = table && { peakSchedule: provider === 'ollama-cloud' && config.prices.ollamaPeak !== false ? 'ollama' : ['volcengine', 'ark'].includes(provider) && config.prices.volcenginePeak !== false ? 'volcengine' : undefined, ...table }
+      const peak = { enabled: config?.peakEnabled === true, effectiveAtMs: Date.parse(config?.peakEffectiveAt), windows: config?.peakWindows, holidays: config?.peakHolidays }
+      if (entry && configuredPeakAt(entry, now, peak) !== null) return configuredPeakPhase(entry, now, peak)
       return peakPhaseAt(now, config?.peakWindows ?? [], config?.peakHolidays, ['volcengine', 'ark'].includes(provider) ? 'volcengine' : undefined)
     }
 
@@ -2280,6 +2540,40 @@
       const config = state?.config
       const selected = provider ?? config?.peakProvider ?? state?.meta?.defaultProvider
       return config && selected ? { ...config, peakProvider: selected } : config
+    }
+
+    function peakPeriodProgress(config, view, now) {
+      let start = view.prevAtMs
+      // A weekend or holiday can begin during an existing off-peak period.
+      for (let i = 0; i < 16; i++) {
+        const before = peakPhaseForConfig(config, start - 1)
+        if (!before || before.inPeak !== view.inPeak || before.prevAtMs >= start) break
+        start = before.prevAtMs
+      }
+      return { start, progress: Math.max(0, Math.min(100, (now - start) / Math.max(1, view.nextAtMs - start) * 100)) }
+    }
+
+    function peakMarkerPosition(config, view, now) {
+      const { progress } = peakPeriodProgress(config, view, now)
+      return (view.weekend || view.holiday ? progress : (view.inPeak ? 0 : 50) + progress / 2) + '%'
+    }
+
+    function usePeakClock(config, fixedNow) {
+      const [clock, setClock] = useState(Date.now())
+      useEffect(() => {
+        if (fixedNow !== undefined) return
+        let timer
+        const tick = () => {
+          window.clearTimeout(timer)
+          if (document.hidden) return
+          const stamp = Date.now(), phase = peakView(config, stamp)
+          setClock(stamp)
+          timer = window.setTimeout(tick, Math.max(100, Math.min(30000, (phase?.nextAtMs ?? stamp + 30000) - stamp)))
+        }
+        tick(); document.addEventListener('visibilitychange', tick)
+        return () => { window.clearTimeout(timer); document.removeEventListener('visibilitychange', tick) }
+      }, [fixedNow, config.peakWindows, config.peakHolidays, config.peakProvider])
+      return fixedNow ?? clock
     }
 
     /** 相位标签键:周末全谷价 / 峰时 / 谷时(chip = 展开态文案,short = 收起态短词,notice = 悬停说明)。 */
@@ -2367,11 +2661,7 @@
     /** 展开态简洁样式:单行紧凑时段条——细轨道(左橙右蓝,非当前段淡化)+ 标记线 + 右侧倒计时文本。 */
     function PeakStrip(props) {
       const { config, t } = props
-      const [now, setNow] = useState(Date.now())
-      useEffect(() => {
-        const timer = window.setInterval(() => setNow(Date.now()), 30000)
-        return () => window.clearInterval(timer)
-      }, [])
+      const now = usePeakClock(config, props.now)
       const view = peakView(config, now)
       if (view === null) return null
       const keys = phaseLabelKeys(view)
@@ -2383,18 +2673,14 @@
           el('div', { className: 'cm-peak-track' },
             el('div', { className: 'cm-peak-segment cm-peak-high' }),
             el('div', { className: 'cm-peak-segment cm-peak-low' }),
-            el('div', { className: 'cm-peak-marker', style: { left: view.weekend || view.holiday ? '50%' : view.inPeak ? '25%' : '75%' } })),
+            el('div', { className: 'cm-peak-marker', style: { left: peakMarkerPosition(config, view, now) } })),
           el('span', { className: 'cm-peak-chip' }, t(keys.chip) + ' · ' + chipText)))
     }
 
     /** 展开态经典样式:轨道 + 箭头旗标 + 胶囊芯片(两行)。 */
     function PeakStripClassic(props) {
       const { config, t } = props
-      const [now, setNow] = useState(Date.now())
-      useEffect(() => {
-        const timer = window.setInterval(() => setNow(Date.now()), 30000)
-        return () => window.clearInterval(timer)
-      }, [])
+      const now = usePeakClock(config, props.now)
       const view = peakView(config, now)
       if (view === null) return null
       const keys = phaseLabelKeys(view)
@@ -2403,7 +2689,7 @@
         : t('nextOffPeakIn', { time: countdownText(view, now, t) })
       return el(Tooltip, { portal: true, label: t(keys.notice), side: 'right', delayMs: 300 },
         el('div', { 'data-cm-display': 'peak', className: 'cm-peak-classic ' + (view.weekend || view.holiday ? 'weekend' : view.inPeak ? 'peak' : 'off') },
-          el('div', { className: 'cm-peak-classic-marker', style: { left: view.weekend || view.holiday ? '50%' : view.inPeak ? '25%' : '75%' } }),
+          el('div', { className: 'cm-peak-classic-marker', style: { left: 'clamp(6px, ' + peakMarkerPosition(config, view, now) + ', calc(100% - 6px))' } }),
           el('div', { className: 'cm-peak-track' },
             el('div', { className: 'cm-peak-segment cm-peak-high' }),
             el('div', { className: 'cm-peak-segment cm-peak-low' })),
@@ -2412,7 +2698,7 @@
     // 进度条与首次介绍共用按需模块，不增加旧样式的定时器和主包体积。
     let peakPage
     function loadPeakPage() {
-      return peakPage ??= require.async('./client.peak.js').then(module => module.mount({ peakView, peakPhaseAt, peakPhaseForConfig, peakConfigForState, phaseLabelKeys, countdownText, resolveLocale, makeT, Tooltip, FloatingCard }))
+      return peakPage ??= require.async('./client.peak.js').then(module => module.mount({ peakView, peakPhaseAt, peakPhaseForConfig, peakConfigForState, peakPeriodProgress, usePeakClock, phaseLabelKeys, countdownText, resolveLocale, makeT, Tooltip, FloatingCard }))
         .catch(error => { peakPage = null; throw error })
     }
     function PeakProgress(props) {
@@ -2426,11 +2712,7 @@
     /** 收起(rail)态简洁样式:竖向同构时段条 + 横排短词(「峰时/平价」),倒计时与完整文案在悬停提示中。 */
     function PeakRailStrip(props) {
       const { config, t } = props
-      const [now, setNow] = useState(Date.now())
-      useEffect(() => {
-        const timer = window.setInterval(() => setNow(Date.now()), 30000)
-        return () => window.clearInterval(timer)
-      }, [])
+      const now = usePeakClock(config, props.now)
       const view = peakView(config, now)
       if (view === null) return null
       const keys = phaseLabelKeys(view)
@@ -2443,18 +2725,14 @@
           el('div', { className: 'cm-peak-rail-track' },
             el('div', { className: 'cm-peak-rail-segment cm-peak-rail-high' }),
             el('div', { className: 'cm-peak-rail-segment cm-peak-rail-low' }),
-            el('div', { className: 'cm-peak-rail-marker', style: { top: view.weekend || view.holiday ? '50%' : view.inPeak ? '25%' : '75%' } })),
+            el('div', { className: 'cm-peak-rail-marker', style: { top: peakMarkerPosition(config, view, now) } })),
           el('span', { className: 'cm-peak-rail-label' }, t(keys.short))))
     }
 
     /** 收起(rail)态经典样式:竖向胶囊条——上橙下蓝满色分段(与展开态一致,不淡化不填充),标记指向当前时段,下方横排短词。 */
     function PeakRailStripClassic(props) {
       const { config, t } = props
-      const [now, setNow] = useState(Date.now())
-      useEffect(() => {
-        const timer = window.setInterval(() => setNow(Date.now()), 30000)
-        return () => window.clearInterval(timer)
-      }, [])
+      const now = usePeakClock(config, props.now)
       const view = peakView(config, now)
       if (view === null) return null
       const keys = phaseLabelKeys(view)
@@ -2467,7 +2745,7 @@
           el('div', { className: 'cm-peak-rail-classic-track' },
             el('div', { className: 'cm-peak-rail-classic-segment peak' }),
             el('div', { className: 'cm-peak-rail-classic-segment off' }),
-            el('div', { className: 'cm-peak-rail-classic-marker', style: { top: view.weekend || view.holiday ? '50%' : view.inPeak ? '25%' : '75%' } })),
+            el('div', { className: 'cm-peak-rail-classic-marker', style: { top: peakMarkerPosition(config, view, now) } })),
           el('span', { className: 'cm-peak-rail-classic-label' }, t(keys.short))))
     }
     function peakNoticeRailEl(state, config, t) {
@@ -2512,7 +2790,7 @@
       const mainKey = config?.goQuota?.main === 'weekly' || config?.goQuota?.main === 'monthly' ? config.goQuota.main : 'rolling'
       const mainWin = goQuota[mainKey]
       const pct = mainWin !== null && typeof mainWin?.percent === 'number' ? Math.max(0, Math.min(100, Number(mainWin.percent) || 0)) : 0
-      const pctOf = win => (win !== null && typeof win?.percent === 'number') ? Math.round(Math.max(0, Math.min(100, win.percent))) + '%' : '—'
+      const pctOf = win => (win !== null && typeof win?.percent === 'number') ? Math.round(simpleBarByDirection(win.percent, barDirectionOf(config, 'go')).label) + '%' : '—'
       const shortOf = k => k === 'rolling' ? t('goShortRolling') : k === 'weekly' ? t('goShortWeekly') : t('goShortMonthly')
       const others = ['rolling', 'weekly', 'monthly'].filter(k => k !== mainKey)
       const resets = mainWin !== null && typeof mainWin?.resetsAt === 'string' && mainWin.resetsAt.length > 0
@@ -2618,7 +2896,15 @@
      * 「余量」填充,与通用卡片/额度横条的「已用」方向相反,同屏并列时引起误读
      * (issue #57);现统一为已用口径,告警阈值也与 CodingPlanBox 一致(≥80 warn / ≥100 over)。
      */
-    function miniMaxRow(label, win, direction, t, explicit) {
+    function quotaTrack(width, gauge) {
+      if (!gauge) return el('div', { className: 'cm-bbox-bar' }, el('div', { className: 'cm-bbox-fill', style: { width: width + '%' } }))
+      const path = { d: 'M22 78 A40 40 0 1 1 78 78', pathLength: 100, fill: 'none', strokeWidth: 8, strokeLinecap: 'round' }
+      return el('svg', { viewBox: '0 0 100 100', 'aria-hidden': true },
+        el('path', { ...path, stroke: 'currentColor', opacity: .18 }),
+        el('path', { ...path, stroke: 'currentColor', strokeDasharray: width + ' 100', opacity: width > 0 ? 1 : 0 }))
+    }
+
+    function miniMaxRow(label, win, direction, t, explicit, gauge) {
       const pct = planWindowUsedPct(win)
       const level = pct === null ? 'ok' : pct >= 100 ? 'over' : pct >= 80 ? 'warn' : 'ok'
       const barView = simpleBarByDirection(pct, direction)
@@ -2630,18 +2916,17 @@
         label: barView.label,
         row: el('div', { key: label, className: 'cm-mm-row' + (level === 'ok' ? '' : ' ' + level) },
           el('span', { className: 'cm-bbox-label' }, label),
-          el('div', { className: 'cm-bbox-bar' },
-            el('div', { className: 'cm-bbox-fill', style: { width: barView.width + '%' } })),
+          quotaTrack(barView.width, gauge),
           el('span', { className: 'cm-bbox-pct cm-num' }, text)),
       }
     }
 
     function MiniMaxPlanCard(props) {
-      const { five, seven, fetchedAt, t, wide, refresh, direction = 'used' } = props
+      const { five, seven, fetchedAt, t, wide, refresh, direction = 'used', gauge } = props
       const hoverProps = useQuotaHoverRefresh(five?.resetsAt)
       const countdown = formatResetCountdown(five?.resetsAt, t)
-      const fiveView = miniMaxRow(t('codingPlanRemain5h'), five, direction, t)
-      const sevenView = miniMaxRow(t('codingPlanRemain7d'), seven, direction, t)
+      const fiveView = miniMaxRow(t('codingPlanRemain5h'), five, direction, t, false, gauge)
+      const sevenView = miniMaxRow(t('codingPlanRemain7d'), seven, direction, t, false, gauge)
       const level = fiveView.level === 'over' || sevenView.level === 'over' ? 'over'
         : fiveView.level === 'warn' || sevenView.level === 'warn' ? 'warn' : 'ok'
       const lineOf = (label, win, view) => {
@@ -2658,8 +2943,7 @@
       ].filter(Boolean).join('\n')
       const body = el(Fragment, null,
         el('div', { className: 'cm-mm-title' }, t('codingPlanMinimaxTitle')),
-        fiveView.row,
-        sevenView.row,
+        el(gauge ? 'div' : Fragment, gauge ? { className: 'cm-plan-gauges' } : null, fiveView.row, sevenView.row),
         countdown ? el('div', { className: 'cm-mm-reset' }, '5h · ' + countdown) : null)
       const rail = el(Fragment, null,
         el('div', { className: 'cm-bbox-rail cm-num' }, fiveView.text),
@@ -2673,15 +2957,28 @@
           wide === false ? rail : body))
     }
 
+    function codingPlanPlaceholder(id, title, live, t, wide, refresh) {
+      const status = refresh.busy || live?.status === 'loading' ? t('refreshing')
+        : refresh.err || live?.status === 'error' ? t('queryFailed')
+        : live?.status === 'ok' ? t('gatewayQuotaEmpty') : t('codingPlanNotQueried')
+      const detail = [title, status, live?.message, ...clickRefreshTipLines(t, refresh)].filter(Boolean).join('\n')
+      return el(Tooltip, { portal: true, label: el('span', { style: { whiteSpace: 'pre-line' } }, detail), side: 'right', delayMs: 300 },
+        el('div', {
+          'data-cm-display': 'plan', 'data-cm-plan': id, 'aria-label': detail,
+          className: 'cm-bbox cm-mm clickable' + (wide === false ? ' rail' : '') + (refresh.busy ? ' busy' : ''),
+          ...clickableRefreshProps(refresh.busy, refresh.run),
+        }, wide === false ? el('div', { className: 'cm-bbox-rail' }, '—')
+          : el(Fragment, null, el('div', { className: 'cm-mm-title' }, title), el('span', { className: 'cm-hint' }, status))))
+    }
+
     function MiniMaxPlanBox(props) {
       const { state, wide, api } = props
       const live = state.codingPlans?.minimax
       const t = makeT(resolveLocale(state.config))
       const refresh = useClickRefresh(api ? () => api.refreshCodingPlan('minimax') : null)
-      if (!live || live.status !== 'ok') return null
-      const { five, seven } = miniMaxWindowsOf(live.windows)
-      if (five == null && seven == null) return null
-      return el(MiniMaxPlanCard, { five, seven, fetchedAt: live.fetchedAt, t, wide, refresh, direction: barDirectionOf(state.config, 'plan') })
+      const { five, seven } = miniMaxWindowsOf(live?.windows)
+      if (live?.status !== 'ok' || (five == null && seven == null)) return codingPlanPlaceholder('minimax', t('codingPlanMinimaxTitle'), live, t, wide, refresh)
+      return el(MiniMaxPlanCard, { five, seven, fetchedAt: live.fetchedAt, t, wide, refresh, direction: barDirectionOf(state.config, 'plan'), gauge: wide !== false && state.config.planQuotaStyle === 'gauge' && !state.config.sidebarTextOnly })
     }
 
     // ── ChatGPT PLUS(Codex)额度(issue #59 / dsh-codex-subscription)──────────
@@ -2865,7 +3162,8 @@
     /** 通用 Coding Plan 侧边栏卡片(issue #31):每窗口一行进度条;文本窗口(余额等)整行文本。 */
     function codingPlanWindowLabel(name, t) {
       if (name.startsWith('core_')) return 'Core · ' + codingPlanWindowLabel(name.slice(5), t)
-      if (name === 'fiveHour' || name === '5h') return '5h'
+      if (name === 'fiveHour' || name === 'five_hour' || name === '5h') return '5h'
+      if (name === 'seven_day') return '7d'
       if (name === 'weekly' || name === 'week' || name === '7d') return name === '7d' ? '7d' : t('goShortWeekly')
       if (name === 'monthly' || name === 'month') return t('goShortMonthly')
       if (name === 'daily' || name === 'day') return t('goShortDaily')
@@ -2884,6 +3182,34 @@
       return Object.entries(windows ?? {}).filter(([name]) => provider !== 'volcengine' || [0, 2, 3].includes(rank(name))).sort((a, b) => rank(a[0]) - rank(b[0]))
     }
 
+    // Claude 的 5 小时 / 7 天窗口长度固定,可由重置时间反推窗口起点,按当前速度线性外推。
+    // 窗口刚开始(已过不足 10%)样本太少,不预测;只在重置前预计会打满时才给出提示。
+    function quotaWindowHours(name) {
+      return /^(five_?hour|5h)$/i.test(name) ? 5 : /^(seven_?day|7d)$/i.test(name) ? 168 : 0
+    }
+
+    function codingPlanQuotaLevel(percent, provider) {
+      return percent >= (provider === 'anthropic' ? 95 : 100) ? 'over' : percent >= 80 ? 'warn' : 'ok'
+    }
+
+    function quotaResetLines(name, win, t, locale, now = Date.now()) {
+      const resetMs = Date.parse(win?.resetsAt)
+      const hours = quotaWindowHours(name)
+      if (!Number.isFinite(resetMs) || hours === 0 || !Number.isFinite(win.percent)) return null
+      const left = resetMs - now
+      if (left <= 0) return null
+      const fmt = new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'zh-CN',
+        hours === 5 ? { hour: '2-digit', minute: '2-digit', hour12: false } : { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false })
+      const minutes = Math.ceil(left / 60000)
+      const reset = hours === 5
+        ? (minutes >= 60 ? t('quotaResetInHm', { h: Math.floor(minutes / 60), m: minutes % 60 }) : t('quotaResetInM', { m: minutes }))
+        : t('quotaResetAt', { time: fmt.format(resetMs) })
+      const total = hours * 3600000
+      const elapsed = now - (resetMs - total)
+      const hitMs = win.percent > 0 && win.percent < 100 && elapsed / total >= 0.1 ? resetMs - total + elapsed * 100 / win.percent : Infinity
+      return { reset, forecast: hitMs > now && hitMs < resetMs ? t('quotaForecastHit', { time: fmt.format(hitMs) }) : '' }
+    }
+
     function CodingPlanBox(props) {
       const hoverProps = useQuotaHoverRefresh()
       const { id, state, wide, api } = props
@@ -2891,31 +3217,36 @@
       const t = makeT(resolveLocale(state.config))
       const refresh = useClickRefresh(api ? () => api.refreshCodingPlan(id) : null)
       const rowDef = CODING_PLAN_ROWS.find(r => r.id === id)
-      if (!rowDef || !live || live.status !== 'ok') return null
-      const windows = live.windows !== null && typeof live.windows === 'object' ? live.windows : {}
+      if (!rowDef) return null
+      const windows = live?.windows !== null && typeof live?.windows === 'object' ? live.windows : {}
       const entries = codingPlanWindowEntries(windows, id)
-      if (entries.length === 0) return null
+      if (live?.status !== 'ok' || entries.length === 0) return codingPlanPlaceholder(id, t(rowDef.labelKey), live, t, wide, refresh)
       const pctOf = win => win !== null && typeof win === 'object' && typeof win.percent === 'number'
         ? Math.max(0, Math.min(100, Math.round(Number(win.percent) || 0))) : null
       // 条形方向(issue #67):Plan 卡默认已用方向,剩余方向时填充与标签显示剩余%。
       const planDirection = barDirectionOf(state.config, 'plan')
+      const gauge = wide !== false && state.config.planQuotaStyle === 'gauge' && !state.config.sidebarTextOnly
       // 余额放在标题行右端,正文只保留额度窗口;
       // 窗口文本只装数值,标题行自己补「余额:」标签。textWindowOf 只产非空文本,真值检查即可。
       const titleValue = (id === 'workbuddy' || id === 'opendesign') && windows.balance?.text
         ? t('codingPlanWindowBalance') + ': ' + windows.balance.text : null
+      const locale = resolveLocale(state.config)
       const rows = (titleValue ? entries.filter(([name]) => name !== 'balance') : entries).map(([name, win]) => {
         const pct = pctOf(win)
         if (pct === null) {
           return el('div', { key: name, className: 'cm-mm-row wide' },
             el('span', { className: 'cm-mm-text' }, typeof win?.text === 'string' ? win.text : '—'))
         }
-        const level = pct >= 100 ? 'over' : pct >= 80 ? 'warn' : 'ok'
+        const level = codingPlanQuotaLevel(pct, id)
         const barView = simpleBarByDirection(pct, planDirection)
-        return el('div', { key: name, className: 'cm-mm-row wide' + (level === 'ok' ? '' : ' ' + level) },
+        const row = el('div', { key: name, className: 'cm-mm-row wide' + (level === 'ok' ? '' : ' ' + level) },
           el('span', { className: 'cm-bbox-label' }, codingPlanWindowLabel(name, t)),
-          el('div', { className: 'cm-bbox-bar' },
-            el('div', { className: 'cm-bbox-fill', style: { width: barView.width + '%' } })),
+          quotaTrack(barView.width, gauge),
           el('span', { className: 'cm-bbox-pct cm-num' }, barView.label === null ? '—' : barView.label + '%'))
+        const lines = id === 'anthropic' ? quotaResetLines(name, win, t, locale) : null
+        return lines === null ? row : el(gauge ? 'div' : Fragment, { key: name }, row,
+          el('div', { className: 'cm-mm-sub' }, lines.reset,
+            lines.forecast && el('div', { className: 'cm-mm-sub warn' }, lines.forecast)))
       })
       const detailParts = entries.map(([name, win]) => {
         const pct = pctOf(win)
@@ -2929,7 +3260,7 @@
       detailParts.push(...clickRefreshTipLines(t, refresh))
       const detail = [t(rowDef.labelKey), ...detailParts].join('\n')
       const pcts = entries.map(([, win]) => pctOf(win)).filter(p => p !== null)
-      const level = pcts.some(p => p >= 100) ? 'over' : pcts.some(p => p >= 80) ? 'warn' : 'ok'
+      const level = codingPlanQuotaLevel(Math.max(0, ...pcts), id)
       const railText = pcts.length > 0
         ? pcts.slice(0, 2).map(p => simpleBarByDirection(p, planDirection).label + '%').join(' ')
         : (typeof entries[0][1]?.text === 'string' ? entries[0][1].text : '—')
@@ -2942,7 +3273,7 @@
               el('div', { className: titleValue ? 'cm-mm-title cm-mm-row wide' : 'cm-mm-title' },
                 t(rowDef.labelKey),
                 titleValue && el('span', { className: 'cm-mm-text' }, titleValue)),
-              ...rows)))
+              el(gauge ? 'div' : Fragment, gauge ? { className: 'cm-plan-gauges' } : null, ...rows))))
     }
 
     const readGatewayAccountLS = id => {
@@ -3181,7 +3512,7 @@
               + (pct === null ? (typeof win?.text === 'string' ? win.text : '—') : pct + '%') + reset)
             if (pct === null) {
               // 文本窗口(余额等无百分比的量):以文本段展示,不占进度条名额。
-              segs.push({ name, pct: null, text: typeof win?.text === 'string' ? win.text : '—' })
+              if (strip.planAmounts !== false) segs.push({ name, pct: null, text: typeof win?.text === 'string' ? win.text : '—' })
               continue
             }
             if (shown >= (rowDef.id === 'factory' ? 3 : 2)) continue
@@ -3215,10 +3546,11 @@
           key: 'codex',
           label: 'Codex',
           level: worst >= 100 ? 'over' : worst >= 80 ? 'warn' : 'ok',
-          tip: t('codexQuotaTitle') + ': ' + [
-            fivePct === null ? null : '5h ' + quotaValueText(100 - fivePct, 'remaining', t),
-            weekPct === null ? null : t('codingPlanRemain7d') + ' ' + quotaValueText(100 - weekPct, 'remaining', t),
-          ].filter(Boolean).join(' · '),
+          tip: [t('codexQuotaTitle'), ...[['5h', fiveWin], [t('codingPlanRemain7d'), weekWin]].filter(([, win]) => win).map(([name, win]) =>
+            name + ': ' + quotaValueText(100 - pctOf(win), 'remaining', t)
+            + (typeof win.resetsAt === 'string' && Number.isFinite(Date.parse(win.resetsAt)) ? ' · ' + t('goResetAt', { time: new Date(win.resetsAt).toLocaleString() }) : '')),
+            codexQuotaCache.fetchedAt > 0 ? t('goQuotaFetchedAt', { time: new Date(codexQuotaCache.fetchedAt).toLocaleTimeString() }) : null,
+          ].filter(Boolean).join('\n'),
           segs: [
             fivePct === null ? null : { name: '5h', pct: 100 - fivePct },
             weekPct === null ? null : { name: 'weekly', pct: 100 - weekPct },
@@ -3245,6 +3577,7 @@
         chips.map(c => {
           const busy = busyKey === c.key
           const err = errs[c.key]
+          const direction = c.key === 'codex' ? 'remaining' : barDirectionOf(config, c.key === 'budget' || c.key === 'go' ? c.key : 'plan')
           const kids = [el('span', { className: 'cm-qlabel', key: 'l' }, c.label)]
           if (busy) {
             kids.push(el('span', { className: 'cm-qtext', key: 'busy' }, t('refreshing')))
@@ -3256,15 +3589,15 @@
               } else {
                 kids.push(el('span', { className: 'cm-qseg', key: s.name },
                   el('span', { className: 'cm-qbar' }, el('span', { className: 'cm-qfill', style: { width: s.pct + '%' } })),
-                  el('span', null, c.key === 'codex' ? (c.segs.length > 1 ? (s.name === '5h' ? '5h' : t('goShortWeekly')) + ' ' : '') + quotaValueText(s.pct, 'remaining', t) : s.pct + '%')))
+                  el('span', null, (c.key === 'codex' && c.segs.length > 1 ? (s.name === '5h' ? '5h' : t('goShortWeekly')) + ' ' : '') + quotaValueText(s.pct, direction, t))))
               }
             })
           }
           const tipLines = [c.tip]
           if (!busy && api) tipLines.push(t('clickToRefresh'))
           if (busy) tipLines.push(t('refreshing'))
-          if (err) tipLines.push('⚠ ' + t('balanceRefreshFailed', { message: err }))
-          return el(Tooltip, { portal: true, key: c.key, label: tipLines.join('; '), side: 'bottom', delayMs: 400 },
+          if (err) tipLines.push('⚠ ' + t('queryFailed') + ': ' + err)
+          return el(Tooltip, { portal: true, key: c.key, label: c.key === 'codex' ? el('span', { style: { whiteSpace: 'pre-line' } }, tipLines.join('\n')) : tipLines.join('; '), side: 'bottom', delayMs: 400 },
             el('span', {
               className: 'cm-qchip' + (api ? ' action' : '') + (c.level === 'ok' ? '' : ' ' + c.level),
               ...(api ? clickableRefreshProps(busy, () => doRefresh(c.key)) : {}),
@@ -3346,6 +3679,11 @@
           wide ? el(Fragment, null, el('span', null, t('today')), el('span', { className: 'cm-num cm-bal-amt' }, todayValue)) : el(WalletIcon, { size: 16 })))
     }
 
+    const loadSidebarIcons = () => require.async('./client.sidebar-icons.js').then(module => module.mount({
+      makeT, resolveLocale, peakView, usePeakClock, phaseLabelKeys, countdownText, codexQuotaSnapshot,
+      displayCostOf, formatMoneyUsd, sidebarTodayValue, CODING_PLAN_ROWS,
+    }))
+
     function SidebarFooter(props) {
       const costStore = props.useCost ? props.useCost(s => s) : undefined
       useCodexQuota(costStore?.state?.config?.codexQuotaEnabled === true && costStore?.state?.config?.codexQuotaSidebar !== false, costStore?.state?.config?.codexQuotaSource)
@@ -3377,7 +3715,7 @@
       const goOk = (config.goQuota?.enabled !== false)
         && (config.goQuota?.display === 'sidebar' || config.goQuota?.display === 'both')
         && state.goQuota?.status === 'ok' && state.goQuota?.[goMainKey] !== null
-      // Coding Plan 侧边栏卡片(issue #31):每家按 display 门控(侧边栏/两者),启用且查询成功才展示;
+      // Coding Plan 按启用与显示位置展示；尚未查询或失败时保留原因和重试入口。
       // MiniMax 沿用专用 5h/7d 卡片(issue #57 起与通用卡片同为「已用」方向),其余厂商走通用 CodingPlanBox。
       const sidebarPlanIds = CODING_PLAN_ROWS
         .map(r => r.id)
@@ -3385,10 +3723,7 @@
           const entry = config.codingPlans?.[id]
           if (entry?.enabled !== true) return false
           if (entry.display !== 'sidebar' && entry.display !== 'both') return false
-          const live = state.codingPlans?.[id]
-          if (live?.status !== 'ok') return false
-          const wins = live.windows !== null && typeof live.windows === 'object' ? live.windows : {}
-          return Object.keys(wins).length > 0
+          return true
         })
       const plansOn = sidebarPlanIds.length > 0
       // 网关额度侧边栏卡片(issue #96):按来源 display 门控,卡片本体见 GatewayQuotaBox。
@@ -3399,7 +3734,7 @@
       const showToday = config.sidebar !== false && config.hideTodayCost !== true
       const peakOn = peakView(config, Date.now()) !== null
       const modelsOn = config.sidebarModels?.enabled === true
-      if (!modelsOn && !showBalance && !showCustomBalance && !goOk && !plansOn && !codexOn && !budgetOn && !showToday && !peakOn && gatewayNodes.length === 0) return null
+      if (!config.localSavings?.enabled && !modelsOn && !showBalance && !showCustomBalance && !goOk && !plansOn && !codexOn && !budgetOn && !showToday && !peakOn && gatewayNodes.length === 0) return null
       // 紧凑模式(侧边栏进度条样式):宽栏下各额度卡内部的时间段进度行排两列
       // (CSS 于 .cm-footer-stack.compact 生效);卡片本身与收起(rail)态维持原样。
       const simple = config.sidebarSimple === true
@@ -3407,7 +3742,9 @@
       const nodes = []
       if (simple && wide && showToday && !config.sidebarTodayBalanceInline) nodes.push(el('div', { key: 'today', 'data-cm-display': 'today', className: 'cm-simple-summary' },
         el('span', null, t('today')), el('span', { className: 'cm-num' }, sidebarTodayValue(state.today, config, t))))
-      if (showBalanceBar) nodes.push(el(BalanceBox, { key: 'balance', state, wide, api: api }))
+      if (showBalance && state.balanceAccounts?.length > 1) nodes.push(el(Fragment, { key: 'balance' }, ...state.balanceAccounts.map(row => el(BalanceRowContent, { key: row.id, accountId: 'official-' + row.id, label: row.label, state: { ...state, balance: row, reconcile: undefined }, wide, api }))))
+      else if (showBalance && state.balance?.status === 'off' && state.balanceAccounts?.length === 1) nodes.push(el(BalanceRowContent, { key: 'balance', state: { ...state, balance: state.balanceAccounts[0], reconcile: undefined }, wide, api }))
+      else if (showBalanceBar) nodes.push(el(BalanceBox, { key: 'balance', state, wide, api: api }))
       else if (showBalance) nodes.push(el(BalanceRowContent, { key: 'balance', state, wide, api: api }))
       if (showCustomBalanceBar) nodes.push(el(CustomBalanceBox, { key: 'customBalance', state, wide, api: api }))
       else if (showCustomBalance) nodes.push(el(CustomBalanceRowContent, { key: 'customBalance', state, wide, api: api }))
@@ -3424,10 +3761,11 @@
       if (peakOn) nodes.push(el(Fragment, { key: 'peak' }, wide ? peakNoticeEl(state, config.sidebarStyle === 'summary' && !config.sidebarSimple ? { ...config, peakProgressVariant: 'summary' } : config, t) : peakNoticeRailEl(state, config, t)))
       if (modelsOn) nodes.splice(config.sidebarModels.position === 'first' ? 0 : config.sidebarModels.position === 'afterBalance' ? afterBalance : nodes.length, 0,
         el(SidebarModelCosts, { key: 'models', state, wide, preview }))
+      if (config.localSavings?.enabled) nodes.push(el(BillingStatistics, { key: 'localSavings', state, wide, load: loadLocalSavings, quiet: true }))
       const order = config.sidebarOrder?.length ? config.sidebarOrder : config.sidebarStyle === 'summary' && !simple ? ['today', 'balance', 'peak'] : []
       if (order.length) {
         const rank = node => { const index = order.indexOf(node.key); return index < 0 ? 999 : index }
         nodes.sort((a, b) => rank(a) - rank(b))
       }
-      return el('div', { ...(simple ? { tabIndex: 0, role: 'region', 'aria-label': t('sidebarSimple') } : {}), className: 'cm-footer-stack' + (config.sidebarTodayBalanceInline ? ' same-line' : '') + (wide ? '' : ' rail') + (compactWide ? ' compact' : '') + (simple ? ' simple' : config.sidebarStyle === 'summary' && wide ? ' summary' : '') + (config.sidebarTextOnly ? ' text-only' : '') }, ...nodes)
+      return el('div', { ...(simple ? { tabIndex: 0, role: 'region', 'aria-label': t('sidebarSimple') } : {}), className: 'cm-footer-stack' + (config.sidebarTodayBalanceInline ? ' same-line' : '') + (wide ? '' : ' rail') + (compactWide ? ' compact' : '') + (simple ? ' simple' : config.sidebarStyle === 'summary' && wide ? ' summary' : '') + (config.sidebarTextOnly ? ' text-only' : '') }, ...(!simple && wide && config.sidebarStyle === 'icons' ? [el(BillingStatistics, { load: loadSidebarIcons, state: { ...state, config }, preview, nodes, fallback: nodes })] : nodes))
     }

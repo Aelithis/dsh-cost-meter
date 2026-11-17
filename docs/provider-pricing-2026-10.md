@@ -1,10 +1,14 @@
 # 2026-10 模型价格目录与渠道选择 / Model pricing and routes
 
-核对日期 / Checked: 2026-10-15
+核对日期 / Checked: 2026-10-28
 
 ## 中文
 
-此前针对 #224 补齐 GPT-6 Sol/Luna、GPT-6.1 Sol、Gemini 3.8 Flash、Claude Fable 5.1、Opus 5.5 等模型，并按公开价格页面扩充其他模型。内置第三方目录包含 290 个「厂商 / 模型」条目、191 个不同模型 ID（含官方别名和历史快照 ID）；其中 288 条有可执行价格，2 条明确未核价。DeepSeek 主表单独保留。OpenRouter 在启动及小时级定时检查时按跨重启的一小时冷却补充本渠道模型，失败或中断也保留冷却；手动同步仍可立即执行。静态目录的数量不是在线目录的上限。
+### 10 月 28 日更新
+
+最新补充、套餐变更和来源见 [更新明细](catalog-2026-10-28.md)。当前 OpenCode 端点已按 10 月 28 日页面核对：Zen 83 个、Go 30 个；下文的 10 月 15 日数量和价格差异保留为当日记录。当前 Zen GPT-6.1 Sol 缓存读已为 $0.10，超过 272K 输入为 $0.20。
+
+此前针对 #224 补齐 GPT-6 Sol/Luna、GPT-6.1 Sol、Gemini 3.8 Flash、Claude Fable 5.1、Opus 5.5 等模型，并按公开价格页面扩充其他模型。内置第三方目录包含 360 个「厂商 / 模型」条目、225 个不同模型 ID（含官方别名和历史快照 ID）；其中 355 条有可执行价格，5 条明确未核价。DeepSeek 主表单独保留。OpenRouter 在启动及小时级定时检查时按跨重启的一小时冷却补充本渠道模型，失败或中断也保留冷却；手动同步仍可立即执行。静态目录的数量不是在线目录的上限。
 
 ### 10 月 15 日更新
 
@@ -15,8 +19,8 @@ Haiku 5.5 按 100,000 输入 Token 分档，缓存读取和写入也计入阈值
 ### 先选渠道，再选模型
 
 - `openai`、`anthropic`、`google`、`xai`、`mistral`、`z-ai` 使用各自直接 API 的价格。已知厂商不会自动套用另一厂商的模型价
-- `opencode-zen` 是本次明确区分的 **Zen 按量渠道**，覆盖核对当天端点表全部 87 个模型（另外保留 4 个历史 ID）
-- `opencode-go` 使用 **Go 订阅参考价**，覆盖全部 32 个模型（另外保留 3 个历史 ID）；这些价格用于额度和等值费用估算，不代表每次请求额外扣款
+- `opencode-zen` 是本次明确区分的 **Zen 按量渠道**，覆盖当前端点表全部 83 个模型（另外保留 13 个历史 ID）
+- `opencode-go` 使用 **Go 订阅参考价**，覆盖全部 30 个模型（另外保留 11 个历史 ID）；这些价格用于额度和等值费用估算，不代表每次请求额外扣款
 - 为兼容本项目历史宿主配置，`zen` / `opencode` 仍按 Go 别名处理；用户在原渠道手写的价格条目及显式映射优先。按量 Zen 请选择 `opencode-zen` 的价格条目，不要依靠历史别名猜测。这是价格渠道键，不会创建宿主推理 Provider；宿主仍使用历史名字时，可显式映射到 `opencode-zen:<模型 ID>`，并把该宿主模型的 Plan/API 分类指定为 API。模型级 Plan/API 覆盖仍优先于自动分类
 - 缺失渠道的旧宿主兼容推断只保留旧 Go 模型集合，并且要求该模型仍在 Go 渠道表中。新增目录条目不会仅因同名就把 API 消费变成订阅
 - `openrouter` 使用完整模型 ID 精确匹配。`:free` / `:online` 等变体、其他路由及本地模型不会借用其价格
@@ -44,9 +48,9 @@ Haiku 5.5 按 100,000 输入 Token 分档，缓存读取和写入也计入阈值
 
 ## English
 
-The third-party catalog now contains 290 provider/model entries and 191 distinct model IDs, including official aliases and dated snapshots: 288 executable prices and 2 explicitly unpriced entries. The separate DeepSeek table remains intact. OpenRouter startup and hourly checks share a persistent one-hour cooldown, including after failures or interrupted downloads. Manual synchronization can refresh immediately.
+The third-party catalog now contains 360 provider/model entries and 225 distinct model IDs, including official aliases and dated snapshots: 355 executable prices and 5 explicitly unpriced entries. The separate DeepSeek table remains intact. OpenRouter startup and hourly checks share a persistent one-hour cooldown, including after failures or interrupted downloads. Manual synchronization can refresh immediately.
 
-Use direct vendor IDs for their own API prices, `opencode-zen` for all 87 currently published Zen PAYG endpoints, and `opencode-go` for all 32 currently published Go subscription-reference endpoints. Historical host IDs `zen` / `opencode` retain their Go meaning; manually entered prices and explicit mappings win. These are pricing keys, not newly registered inference providers. If a PAYG host uses a historical name, explicitly map its model to `opencode-zen:<model ID>` and set that host model’s Plan/API class to API. A model-level Plan/API override remains authoritative. Catalog growth does not infer new subscription usage from a bare model name.
+Use direct vendor IDs for their own API prices, `opencode-zen` for all 83 currently published Zen PAYG endpoints, and `opencode-go` for all 30 currently published Go subscription-reference endpoints. Historical host IDs `zen` / `opencode` retain their Go meaning; manually entered prices and explicit mappings win. These are pricing keys, not newly registered inference providers. If a PAYG host uses a historical name, explicitly map its model to `opencode-zen:<model ID>` and set that host model’s Plan/API class to API. A model-level Plan/API override remains authoritative. Catalog growth does not infer new subscription usage from a bare model name.
 
 Prices are USD per million tokens. Cache reads/writes and per-request context tiers are separate. OpenAI thresholds count complete input, including cached tokens; xAI's direct 200K boundary is inclusive while Zen's is exclusive. Claude generic cache writes use the published 5-minute tier; 1-hour TTL, Gemini cache storage charged per token-hour, modality-specific prices, tool fees and special processing tiers need separate accounting. Go's DeepSeek tiers use its UTC weekday schedule, not direct DeepSeek's Beijing holiday calendar.
 

@@ -17,30 +17,51 @@ OpenDesign uses shared subscription allowances and can fall back to its wallet; 
 
 ### Quota queries
 
-**DSH-only use:** you do not need to install the OpenDesign app to use its model API in DSH or track conversation costs. Remote quota reads additionally need the workspace ID and Control Key from your OpenDesign Cloud account. An inference API key cannot supply these credentials. If you only have an inference key, leave this quota card disabled; price matching and conversation costs continue to work.
+The OpenDesign desktop app is not required. The card has a **Get quota credential** button that runs the same device authorization the official `vela login` uses; the old Cookie / Control Key paths remain.
 
-1. Open **Settings → Cost → Quotas**, find **OpenDesign**, and expand its settings.
-2. Enter the exact **workspace ID** from your OpenDesign Cloud workspace.
-3. Configure a **Control Key** in the credential editor, or supply `OPENDESIGN_CONTROL_KEY` / `VELA_CONTROL_KEY` to the DSH host. An inference key from the Cloud API Keys page is a different credential and cannot be used for this query. The existing OpenDesign/Vela login keeps control credentials in its own profile; the plugin does not read or rewrite that profile automatically.
-4. Enable the card and refresh. Select its location to also show it in the sidebar or quota strip.
+**One click (recommended)**
 
-The credential editor saves to `OPENDESIGN_CONTROL_KEY` in the DSH credential store. Both it and the `VELA_CONTROL_KEY` alias are reflected in the configured/source indicator. Clearing the editor removes the primary stored key; an alias or host environment value can remain active. Legacy OpenDesign config keys also use the existing startup migration. This repairs the missing editor mapping reported and located by @unifilitence in [#317](https://github.com/Han-1413141/dsh-cost-meter/issues/317).
+1. Open **DSH Settings → Cost → Quotas → OpenDesign** and enable the card.
+2. Press **Get quota credential**. The plugin asks `amr-api` for a device authorization, opens the approval page in the browser and writes the 6-character code to the DSH host log (`[cost-meter] OpenDesign device authorization: …`).
+3. Approve the CLI sign-in in the browser. The plugin then polls until it receives the account's control key (`vela_ctrl_…`), stores it in the existing `OPENDESIGN_CONTROL_KEY` slot, reads the active workspace ID from `workspaces/current`, and refreshes the 5-hour and 7-day windows immediately.
 
-The host issues only these authenticated GET requests to the fixed official HTTPS origin:
+The device authorization is public but not documented; it was verified against the official Cloud web client and the `vela` CLI on 2026-11-07. Only the control key is stored — the runtime key (`sk-amr_…`) belongs to model calls and cannot read quota. Repeated clicks start a single authorization; changing the quota settings or unloading the plugin while it runs discards the result.
+
+**Manual fallback** (expired session, unavailable device authorization, or a different account)
+
+1. Sign in to the [OpenDesign Cloud dashboard](https://open-design.ai/cloud/dashboard).
+2. Open browser DevTools (**F12 → Network**), reload the dashboard, and select a `coding-plan-usage` or `wallet/balance` request to `amr-api.open-design.ai`. Under **Request Headers**, copy the full **Cookie** value (or the complete `Cookie: ...` line). Do not copy response `Set-Cookie` or run a script in the console.
+3. Open **DSH Settings → Cost → Quotas → OpenDesign**, edit **Cookie / Control Key**, paste and save. Leave workspace ID blank to read the website's current workspace, or copy the ID between `/workspaces/` and `/billing/` or `/wallet/` in that request URL.
+4. Refresh. If the Cookie expires, sign in on the website and copy it again.
+
+Inference API keys from the API Keys page cannot read account quota.
+
+Existing Control Keys still use the same editor and require an explicit workspace ID. The editor stores either credential in the existing DSH credential slot `OPENDESIGN_CONTROL_KEY` (named accounts use their own slots). Host environment aliases are checked in order: `OPENDESIGN_CONTROL_KEY`, `VELA_CONTROL_KEY`, `OPENDESIGN_COOKIE`. Clearing a saved credential does not remove environment values. The original editor mapping was reported and located by @unifilitence in [#317](https://github.com/Han-1413141/dsh-cost-meter/issues/317).
+
+Only these fixed official HTTPS endpoints are used:
 
 ```text
-https://amr-api.open-design.ai/api/v1/workspaces/{workspaceId}/billing/preflight            # direct Bearer-only window query
-https://amr-api.open-design.ai/api/v1/workspaces/{workspaceId}/wallet/balance               # wallet, read independently
+POST https://amr-api.open-design.ai/api/v1/cli/device-authorizations                       # one-click setup, no credential
+POST https://amr-api.open-design.ai/api/v1/cli/device-authorizations/{deviceId}/token     # one-click setup, polls for approval
+https://amr-api.open-design.ai/api/v1/workspaces/current                                  # Cookie, or the Control Key after one-click setup
+https://amr-api.open-design.ai/api/v1/workspaces/{workspaceId}/billing/coding-plan-usage    # Cookie
+https://amr-api.open-design.ai/api/v1/workspaces/{workspaceId}/billing/preflight            # Control Key
+https://amr-api.open-design.ai/api/v1/workspaces/{workspaceId}/wallet/balance               # same credential as quota, independent read
 ```
+
+The device authorization routes were verified on 2026-11-07: the pair returns `deviceId` / `userCode` / `deviceSecret` / `activationUrl`, a bogus path answers `404` while an unknown device secret answers `401`, and the `vela` CLI shipped with the desktop app embeds the same paths. They are public but undocumented, so the manual Cookie path stays.
+
+The Cookie routes, `activeWorkspaceId` field and API origin were checked against the official Cloud dashboard assets on 2026-10-29: `cloud-root-CUrPHDgS.js` and `pricing-refund-policy-Bamt0E9e.js`. Tests use synthetic credentials and responses; no authenticated real-account query was performed.
 
 #### Endpoint permissions and 401 troubleshooting
 
-- `/billing/preflight` and `/wallet/balance` run in parallel with `Authorization: Bearer ...` and `x-vela-workspace-id`. The plugin no longer queries the browser-session-only `coding-plan-usage` route. Preflight nests the quota windows under `codingPlan`; both layers' workspace and member identities are validated before unwrapping.
+- `/billing/preflight` and `/wallet/balance` run in parallel with `Authorization: Bearer ...` and `x-vela-workspace-id`. Cookie mode uses `coding-plan-usage` instead, sending only the Cookie header and the same workspace header. It never sends that Cookie as a Bearer token. Preflight nests the quota windows under `codingPlan`; both layers' workspace and member identities are validated before unwrapping.
 - The wallet endpoint remains an independent query with its `billingScopeVersion: 2` contract. A valid wallet response is authoritative. When it cannot be read, a validated preflight result may display its `balanceUsd` as a fallback, including when no subscription is active. Failure on one side preserves the other; no missing value becomes a fabricated zero. The failing side and reason appear in the settings card, sidebar/strip tooltip and manual-refresh result. A fallback balance is labelled as coming from `billing/preflight`.
 - The workspace ID is `items[].workspaceId` from `GET https://amr-api.open-design.ai/api/v1/workspaces`, not `profiles.prod.user.id` from `~/.amr/config.json`.
-- For a 401/403, check that the Control Key is current, belongs to the selected workspace and can read that workspace. An inference key or a user ID in the workspace field will not work. If the account rejects preflight too, use the OpenDesign Cloud console to check quota; a readable wallet is still shown separately.
+- In Cookie mode, a 401/403 means you should sign in again, copy the request Cookie and check workspace access.
+- In Control Key mode, check that the Control Key is current, belongs to the selected workspace and can read that workspace. An inference key or a user ID in the workspace field will not work. If the account rejects preflight too, use the OpenDesign Cloud console to check quota; a readable wallet is still shown separately.
 
-Quota and wallet responses must match the requested workspace. The wallet must identify its member; if the quota response provides a member identity, both must match. A preflight response that omits the redundant outer `workspaceId` is accepted only after the requested workspace has scoped the request; a body naming a different workspace is rejected. Credentials are never forwarded through a redirect and no cookie is attached. They use the existing DSH credential store and are excluded from the ledger and client snapshot.
+Quota and wallet responses must match the requested workspace. The wallet must identify its member; if the quota response provides a member identity, both must match. A preflight response that omits the redundant outer `workspaceId` is accepted only after the requested workspace has scoped the request; a body naming a different workspace is rejected. Credentials are never forwarded through a redirect. Control Key requests never attach cookies; Cookie requests never attach Bearer authorization. They use the existing DSH credential store and are excluded from the ledger and client snapshot.
 
 Each returned allowance window has its own used percentage and reset time. The API's `durationSeconds` identifies the window: `18000` (5 hours) maps to `fiveHour`, and `604800` (7 days) maps to `weekly`, regardless of response order or time remaining until reset. Simultaneous windows are not added together or called unlimited. Wallet credit remains a separate USD-equivalent value, including a real zero. Quota and wallet are fetched independently, so a failure on one side keeps the other side visible; an `eligible: false` / empty-window answer is reported as **no active subscription** instead of a credential failure. Invalid, unauthorized or missing responses never fabricate a zero allowance; when both sides fail, the card shows an error/unavailable state. The workspace setting is kept across restarts and invalidates the previous query when changed.
 
@@ -65,30 +86,51 @@ OpenDesign 的 API 与客户端共用套餐，套餐用尽后可以继续扣钱�
 
 ### 额度查询
 
-**只使用 DSH 的情况：**在 DSH 调用 OpenDesign 模型 API、统计会话费用，都不需要安装 OpenDesign 应用。远端额度查询另外需要 OpenDesign Cloud 账户的工作区 ID 和 Control Key，推理 API Key 不能代替。如果只有推理密钥，可以关闭额度卡片，价格匹配和会话计费照常工作。
+不需要安装 OpenDesign 桌面版。卡片上有**一键获取额度凭据**按钮，走的是官方 `vela login` 同一套设备码授权；原有 Cookie / Control Key 方式保留。
 
-1. 在 **设置 → 费用 → 额度**找到并展开 **OpenDesign**。
-2. 填入 OpenDesign Cloud 中对应的**工作区 ID**。
-3. 在凭据编辑器中配置 **Control Key**，或向 DSH 宿主提供 `OPENDESIGN_CONTROL_KEY` / `VELA_CONTROL_KEY`。Cloud API Keys 页生成的推理密钥与查询凭据不同，不能混用。已有 OpenDesign／Vela 登录将控制端凭据保存在其自身配置中，本插件不会自动读取或修改那个配置。
-4. 开启并刷新，可选择在侧栏或额度横条显示。
+**一键获取（推荐）**
 
-凭据编辑器会把密钥保存到 DSH 凭据库的 `OPENDESIGN_CONTROL_KEY`。该名称与 `VELA_CONTROL_KEY` 别名都会反映到“已配置／来源”状态。清除只移除编辑器保存的首选密钥；别名或宿主环境变量仍可能生效。旧配置中的 OpenDesign 密钥也会参与既有的启动迁移。这修复了 @unifilitence 在 [#317](https://github.com/Han-1413141/dsh-cost-meter/issues/317) 报告并定位的凭据映射遗漏。
+1. 打开 **DSH 设置 → 费用 → 额度 → OpenDesign**，启用该卡片。
+2. 点击**一键获取额度凭据**。插件向 `amr-api` 申请设备码授权，在浏览器打开授权页，并把 6 位验证码写入 DSH 宿主日志（`[cost-meter] OpenDesign device authorization: …`）。
+3. 在浏览器里批准这次 CLI 登录。插件随后轮询拿到该账号的控制面密钥（`vela_ctrl_…`），写入 DSH 凭据库原有的 `OPENDESIGN_CONTROL_KEY` 槽位，从 `workspaces/current` 读取当前工作区 ID，并立刻刷新 5 小时与 7 天窗口。
 
-查询只访问以下固定官方 HTTPS GET 端点，并在凭据／工作区校验之后才发起：
+该设备码授权端点是公开但未文档化的契约，2026-11-07 已对照官方 Cloud 网页与 `vela` CLI 核实。只保存控制面密钥；运行时密钥（`sk-amr_…`）属于模型调用，不能查询额度。连续点击只发起一份授权；授权进行中修改额度设置或卸载插件会让结果作废。
+
+**手工兜底**（Cookie 过期、设备码授权不可用或换账号时）
+
+1. 登录 [OpenDesign Cloud 网页](https://open-design.ai/cloud/dashboard)。
+2. 按 **F12 → 网络（Network）**，刷新网页，选择发往 `amr-api.open-design.ai` 的 `coding-plan-usage` 或 `wallet/balance` 请求。在**请求标头（Request Headers）**中复制 **Cookie** 的完整值，也可连同 `Cookie:` 一起复制。不要复制响应的 `Set-Cookie`，不需要在控制台执行脚本。
+3. 打开 **DSH 设置 → 费用 → 额度 → OpenDesign**，编辑 **Cookie / Control Key**，粘贴并保存。工作区 ID 留空时读取网页当前工作区；也可从刚才请求 URL 中复制 `/workspaces/` 后、`/billing/` 或 `/wallet/` 前的 ID。
+4. 选择显示位置并刷新。Cookie 失效后，重新登录网页并复制即可。
+
+API Keys 页面生成的推理密钥不能查询账户额度。
+
+原有 Control Key 继续使用同一个凭据编辑器，需明确填写工作区 ID。两种凭据都保存在 DSH 凭据库原有的 `OPENDESIGN_CONTROL_KEY` 槽位，命名账号各自隔离。宿主环境变量依次支持 `OPENDESIGN_CONTROL_KEY`、`VELA_CONTROL_KEY`、`OPENDESIGN_COOKIE`。清除已保存凭据不会移除环境变量。原有凭据映射问题由 @unifilitence 在 [#317](https://github.com/Han-1413141/dsh-cost-meter/issues/317) 报告并定位。
+
+查询只访问以下固定官方 HTTPS 端点：
 
 ```text
-https://amr-api.open-design.ai/api/v1/workspaces/{workspaceId}/billing/preflight            # 直接使用纯 Bearer 查询窗口
-https://amr-api.open-design.ai/api/v1/workspaces/{workspaceId}/wallet/balance               # 钱包端点，独立读取
+POST https://amr-api.open-design.ai/api/v1/cli/device-authorizations                       # 一键获取，无需凭据
+POST https://amr-api.open-design.ai/api/v1/cli/device-authorizations/{deviceId}/token     # 一键获取，轮询批准结果
+https://amr-api.open-design.ai/api/v1/workspaces/current                                  # Cookie，或一键获取后的 Control Key
+https://amr-api.open-design.ai/api/v1/workspaces/{workspaceId}/billing/coding-plan-usage    # Cookie 查询套餐窗口
+https://amr-api.open-design.ai/api/v1/workspaces/{workspaceId}/billing/preflight            # Control Key 查询套餐窗口
+https://amr-api.open-design.ai/api/v1/workspaces/{workspaceId}/wallet/balance               # 使用同一查询凭据，独立读取钱包
 ```
+
+设备码授权端点于 2026-11-07 核实：该对端点返回 `deviceId` / `userCode` / `deviceSecret` / `activationUrl`，伪造路径回 `404`、错误的 `deviceSecret` 回 `401`，桌面版自带的 `vela` CLI 内嵌同一组路径。它公开但未文档化，因此手工 Cookie 方式保留为兜底。
+
+2026-10-29 已核对官方网页资源 `cloud-root-CUrPHDgS.js` 与 `pricing-refund-policy-Bamt0E9e.js` 中的 Cookie 路径、`activeWorkspaceId` 字段和 API 地址。回归使用模拟凭据与响应，未进行真实账户的登录查询。
 
 #### 端点权限与 401 排查
 
-- `/billing/preflight` 和 `/wallet/balance` 使用 `Authorization: Bearer ...` 与 `x-vela-workspace-id` 并行读取，不再请求需要浏览器会话的 `coding-plan-usage`。preflight 把窗口放在 `codingPlan` 内；解析前会核对内外两层工作区和成员身份。
+- `/billing/preflight` 和 `/wallet/balance` 使用 `Authorization: Bearer ...` 与 `x-vela-workspace-id` 并行读取。Cookie 模式改用 `coding-plan-usage`，只发送 Cookie 与相同的工作区标头，不把 Cookie 当作 Bearer 密钥。preflight 把窗口放在 `codingPlan` 内；解析前会核对内外两层工作区和成员身份。
 - 钱包保留独立查询，按 `billingScopeVersion: 2` 契约校验。成功读取的钱包金额优先；钱包不可读时，经校验的 preflight 响应可提供 `balanceUsd` 作为余额，包括没有生效套餐的情况。一侧失败保留另一侧，缺失数据不会变成零。设置卡片、侧栏／横条提示和手动刷新结果都会显示失败的一侧与原因；备用余额会注明来自 `billing/preflight`。
 - 工作区 ID 来自 `GET https://amr-api.open-design.ai/api/v1/workspaces` 的 `items[].workspaceId`，不能填 `~/.amr/config.json` 中的 `profiles.prod.user.id`。
-- 遇到 401／403，检查 Control Key 是否有效、是否属于所填工作区、是否有读取权限。推理 API Key 不能代替 Control Key，用户 ID 不能代替工作区 ID。如果该账户连 preflight 也拒绝，可在 OpenDesign Cloud 控制台查看额度；可读的钱包仍单独显示。
+- Cookie 模式遇到 401／403，重新登录网页、复制请求 Cookie，并检查当前工作区权限。
+- Control Key 模式遇到 401／403，检查 Control Key 是否有效、是否属于所填工作区、是否有读取权限。推理 API Key 不能代替 Control Key，用户 ID 不能代替工作区 ID。如果该账户连 preflight 也拒绝，可在 OpenDesign Cloud 控制台查看额度；可读的钱包仍单独显示。
 
-查询只访问上文列出的固定官方 HTTPS GET 端点；核对工作区，钱包必须提供成员身份，额度响应提供成员身份时再核对二者一致。preflight 响应省略外层冗余 `workspaceId` 时，在已由请求范围校验工作区的前提下仍接受；若响应指向不同工作区则拒绝。凭据由 DSH 凭据库管理，不回显、不写入账本，不跟随重定向，也不附带浏览器 Cookie。
+查询只访问上文列出的固定官方 HTTPS GET 端点；核对工作区，钱包必须提供成员身份，额度响应提供成员身份时再核对二者一致。preflight 响应省略外层冗余 `workspaceId` 时，在已由请求范围校验工作区的前提下仍接受；若响应指向不同工作区则拒绝。凭据由 DSH 凭据库管理，不回显、不写入账本，不跟随重定向。Control Key 请求不附带 Cookie，Cookie 请求不附带 Bearer 密钥。
 
 所有实际返回的窗口分别显示已用百分比和重置时间，不相加、不标成无限。钱包作为独立的美元等值额度显示，真实零余额保留。额度与钱包独立查询：一侧失败时另一侧仍照常显示；`eligible: false`／空窗口回执会明确报告为**无生效订阅**，不再与凭据失效混为一谈。认证失败、缺失回执或身份不匹配不显示虚构的零额度，两侧都失败时才显示错误／不可用状态。工作区配置跨重启保留，改变后清理原查询缓存。
 

@@ -17,7 +17,7 @@ for(const route of ['anthropic','opencode-zen','opencode-go']) {
 assert.equal(quote('anthropic','claude-sonnet-5-5').cacheHit,.1)
 assert.equal(quote('opencode-zen','claude-sonnet-5-5').cacheHit,.2)
 assert.equal(quote('openai','gpt-6.1-sol').cacheHit,.1)
-assert.equal(quote('opencode-zen','gpt-6.1-sol').cacheHit,.2)
+assert.equal(quote('opencode-zen','gpt-6.1-sol').cacheHit,.1)
 for(const [p,id,rates] of [
  ['google','gemini-4-argon',[2,.1,10]], ['mistral','mistral-large-4',[.68,.07,2.09]],
  ['openai','gpt-rosalind-research',[5,.5,25]],['openai','gpt-rosalind-discovery',[5,.5,25]],['openai','gpt-5.6-cyber',[12.5,1.25,75]],

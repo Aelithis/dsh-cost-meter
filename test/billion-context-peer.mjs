@@ -92,7 +92,14 @@ try {
   symlinkSync(aliased, join(profile.dir, 'node_modules/native-alias'), 'junction')
   entries = [entry('native-alias')]
   assert.equal((await lookup.read()).version, '0.1.211')
-  const linkedFile = join(root, 'linked-native.js'); symlinkSync(join(aliased, 'native.js'), linkedFile)
+  let linkedFile = join(root, 'linked-native.js')
+  try { symlinkSync(join(aliased, 'native.js'), linkedFile) }
+  catch (error) {
+    if (process.platform !== 'win32' || error.code !== 'EPERM') throw error
+    // Directory junctions preserve canonical package ownership without Windows file-symlink privileges.
+    const linkedDir = join(root, 'linked-native-package')
+    symlinkSync(aliased, linkedDir, 'junction'); linkedFile = join(linkedDir, 'native.js')
+  }
   entries = [entry(pathToFileURL(linkedFile).href)]
   assert.equal((await lookup.read()).version, '0.1.211', 'file symlink resolves owning real package')
   entries = [entry(join(aliased, 'native.js'))]

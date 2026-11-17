@@ -57,3 +57,46 @@ DSH_TEST_NODE_MODULES=/path/to/host/node_modules \
 DSH_TEST_CODEX_PACKAGE=/path/to/dsh-codex-subscription-3.2.0.tgz \
 node test/codex-subscription-published.mjs
 ```
+
+## 2026-10-29：billion-context 0.1.209 与 Codex Subscription 3.2.1
+
+处理 github-actions[bot] 在 [#441](https://github.com/Han-1413141/dsh-cost-meter/issues/441)、[#442](https://github.com/Han-1413141/dsh-cost-meter/issues/442) 报告的版本及接入函数变化。实际 npm 发布包的 SHA-512 已与官方元数据匹配。
+
+- billion-context 0.1.209：代理增加插件渲染路由；原生传输增加代理重启等待、直连前的超长请求检查和模式变化日志。实际发布包通过四协议计费、缓存用量、压缩、重试、父子会话、API/Plan 分类、回放、重启、取消、隐私及原版 CLI 自动接入检查。
+- dsh-codex-subscription 3.2.1：RPC 增加默认模型重置分支，额度解析器及 reader 指纹保持一致。实际发布包通过单周／双窗口、默认缓存、强制刷新、账号切换、共享请求取消、登录失效与真实宿主传输拒绝检查。
+
+费用插件运行时代码无需调整。仅更新上述两个基线，保留 Connect 基线，并在 CI 中保留旧版本、加入两个新版本。测试使用合成数据与本机服务器，外部账户及模型请求为 0。
+
+### 2026-11-01：Codex Subscription 3.2.2 / 3.2.3
+
+针对 `github-actions[bot]` 的 [#444](https://github.com/Han-1413141/dsh-cost-meter/issues/444)，验证两个实际 npm 发布包的额度解析、单周／双窗口、缓存、强制刷新、账号切换、共享请求取消和宿主传输拒绝。两版通过，外部请求数为 0；基线更新至处理时的 latest 3.2.3，并保存官方包完整性值，CI 保留两版。未改变其他插件基线。
+
+### 2026-11-01：billion-context 0.1.210 / 0.1.211
+
+响应 github-actions[bot] 的 [#451](https://github.com/Han-1413141/dsh-cost-meter/issues/451)。两个实际 npm 发布包通过代理／原生计费、四协议、压缩、重试、缓存、父子会话、API/Plan、历史回放、重启及原版 CLI 自动接入检查；仅使用合成数据与本机服务，外部模型请求为 0。无需修改运行时代码，基线更新至处理时的 0.1.211，CI 保留两版并继续验证旧版。
+
+### 2026-11-03 billion-context 0.1.212
+
+处理 github-actions[bot] 在 [#462](https://github.com/Han-1413141/dsh-cost-meter/issues/462) 报告的原生请求拦截变化。0.1.211 与 0.1.212 的实际发布包均通过 SHA-512 校验。新版原生拦截器在代理请求中添加预填充进度请求头，并从成功响应学习下一次请求所需的序号。
+
+实际发布包的原生及代理计费、四种协议、压缩、重试、缓存用量、父子会话、API/Plan、历史回放、重启和原版 CLI 自动接入检查通过。新增连续原生请求检查，验证成功响应中的 x-bili-pf-seq 被下一次 Request 输入转换为 x-bili-pf-count，同时保留请求体、会话标识、费用关联和两次费用确认。测试使用合成数据与本机服务器，外部请求数为 0。
+
+兼容基线更新为 0.1.212，并将该版本加入现有 CI 矩阵。
+
+### 2026-11-03 Codex Subscription 3.2.4
+
+处理 github-actions[bot] 在 [#465](https://github.com/Han-1413141/dsh-cost-meter/issues/465) 报告的 RPC 与额度 reader 变化。3.2.3 和 3.2.4 的实际发布包均通过官方 SHA-512 校验与既有额度回归。
+
+3.2.4 新增权限限制的公开错误分类，在登录完成后清理账号额度缓存，并在失败冷却结束后重新获取额度。新增检查覆盖普通 403、设备及购买限制说明经 RPC 传递、错误正文脱敏、登录未完成及完成后的缓存处理，以及缓存仍在有效期内时强制刷新失败、冷却结束后的正常重读。所有输入使用合成数据，外部请求数为 0。
+
+兼容基线更新为 3.2.4，两个既有宿主的 CI 矩阵均加入该实际发布包。
+
+### 2026-11-16：billion-context 0.1.215、dsh-codex-subscription 3.2.17 / 3.2.18
+
+两类插件接口指纹保持一致。billion-context 0.1.215 的原生与代理计费、原版 CLI 自动接入、重试、摘要、子代理、回放和重启检查通过。dsh-codex-subscription 3.2.17、3.2.18 的发布包 RPC、额度解析、刷新、账号缓存切换、认证错误和取消检查通过。测试使用本机服务与合成数据，外部请求为 0。基线和 CI 更新至 0.1.215、3.2.18。
+
+### 2026-11-15：billion-context 0.1.214
+
+处理 github-actions[bot] 在 [#504](https://github.com/Han-1413141/dsh-cost-meter/issues/504) 报告的五个接入函数变化。新版拆分首字节与响应体超时，调整摘要日志、错误响应清理，以及原生请求的代理选项和预填充请求头处理。
+
+SHA-512 校验、静态契约检查和实际发布包回归通过：原生及代理计费、四种协议、摘要、重试、缓存、父子会话、API/Plan、历史回放、重启、取消、预填充及本地拒绝请求，另验证原版 CLI 自动接入。测试仅使用合成数据和本机服务，外部模型请求为 0，上游源文件保持原样。本版无需修改计费适配器，基线和 CI 增加 0.1.214。

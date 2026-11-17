@@ -52,7 +52,7 @@ export async function checkDisplayPreview(page, output) {
     await page.locator('.cm-display').screenshot({ path: join(output, 'nested-models.png') })
     await page.locator('[data-model-field=defaultOpen] input').uncheck(); await gray('models-expanded')
     await page.getByRole('switch', { name: '显示此组件', exact: true }).uncheck()
-    await page.waitForFunction(() => window.current().sidebarModels.enabled === false)
+    await page.waitForFunction(() => window.current().sidebarModels.enabled === false && !document.querySelector('#actual-sidebar [data-cm-display=models]'))
     assert.equal(await page.locator('#actual-sidebar [data-cm-display=models]').count(), 0, 'sidebar master controls the real card, independently of the composer chip')
     assert.equal(await page.locator('.cm-sidebar-live [data-cm-display=models]').getAttribute('data-preview-hidden'), 'true')
     await page.getByRole('tab', { name: '概览', exact: true }).click()
@@ -65,9 +65,13 @@ export async function checkDisplayPreview(page, output) {
     for (const key of ['codex', 'customBalance']) {
       await choose(key)
       await page.getByRole('switch', { name: '显示此组件', exact: true }).uncheck()
+      await page.waitForFunction(key => document.querySelector('.cm-sidebar-live [data-cm-display=' + key + ']')?.dataset.previewHidden === 'true', key)
       assert.equal(await page.locator('.cm-sidebar-live [data-cm-display=' + key + ']').getAttribute('data-preview-hidden'), 'true', key + ' remains gray when hidden')
     }
     await region('输入区'); await choose('corner')
+    for (const kind of ['budget', 'go', 'plans']) {
+      assert.match(await page.locator('[data-display=strip-' + kind + '] .cm-qtext').first().innerText(), /已用 \d+(\.\d+)?%|剩余 \d+(\.\d+)?%|—/, 'quota preview labels its used/remaining direction')
+    }
     assert.equal(await page.locator('[data-display=corner] .cm-corner-chip').count(), 4, 'corner periods are individual real chips')
     assert.equal(await page.locator('[data-display=corner] .cm-preview-part[data-preview-hidden=true]').count(), 4)
     await page.locator('.cm-inspector-controls input').first().check()
@@ -75,7 +79,15 @@ export async function checkDisplayPreview(page, output) {
     await choose('models')
     assert.equal(await page.locator('[data-display=models] .cm-model-top').count(), 1, 'composer has a real selectable model Top-1 chip')
     assert.equal(await page.locator('[data-model-field=tokens]').count(), 0, 'composer does not offer sidebar-only settings')
-    await choose('badge'); await page.getByRole('switch', { name: '仅显示金额', exact: true }).check()
+    await choose('dock-cost')
+    assert.equal(await page.getByRole('switch', { name: '仅显示金额', exact: true }).count(), 1)
+    assert.equal(await page.locator('[data-display=dock-cost] .cm-dsym').count(), 0, 'preview does not treat currency as a leading icon')
+    assert.match(await page.locator('[data-display=dock-cost] .cm-dl').innerText(), /^本会话 ¥/, 'preview currency immediately precedes the amount')
+    assert.match(await page.locator('[data-display=dock-cost] .cm-dl').innerText(), /命中/, 'preview restores the master token/hit detail text')
+    assert.equal(await page.locator('.cm-preview-scene [data-display=session-dock], .cm-preview-scene [data-display=badge]').count(), 0, 'the old separate composer cost entries are gone')
+    const composerOptions = await page.getByLabel('调整组件', { exact: true }).locator('option').evaluateAll(options => options.map(option => option.value))
+    assert.ok(composerOptions.includes('dock-cost') && !composerOptions.includes('session-dock') && !composerOptions.includes('badge'), 'composer lists only the merged entry: ' + composerOptions.join(','))
+    await page.getByRole('switch', { name: '仅显示金额', exact: true }).check()
     await page.waitForFunction(() => document.querySelector('[data-display-part=session-detail]').dataset.previewHidden === 'true')
     assert.equal(await page.locator('[data-display-part=session-id],[data-display-part=session-agents]').count(), 0)
 
@@ -90,7 +102,7 @@ export async function checkDisplayPreview(page, output) {
         await page.locator('#root').evaluate((n, w) => n.style.width = w + 'px', width)
         for (const name of ['侧栏', '输入区', '会话内容']) {
           await region(name)
-          for (const key of name === '侧栏' ? ['balance', 'models', 'peak'] : name === '输入区' ? ['badge', 'corner', 'models'] : ['badge', 'turn']) {
+          for (const key of name === '侧栏' ? ['balance', 'models', 'peak'] : name === '输入区' ? ['dock-cost', 'corner', 'models'] : ['session-header', 'turn']) {
             await choose(key)
             const geometry = await page.locator('.cm-preview-workspace').evaluate(n => {
               const scene = n.querySelector('.cm-preview-scene').getBoundingClientRect(), panel = n.querySelector('aside').getBoundingClientRect()
@@ -98,12 +110,14 @@ export async function checkDisplayPreview(page, output) {
               return { layoutHeight, side: panel.left >= scene.right - 1, top: Math.abs(panel.top - scene.top), height: panel.height, overflow: n.scrollWidth > n.clientWidth + 2,
                 switchHeight: n.querySelector('.cm-inspector-visibility').getBoundingClientRect().height }
             })
-            if (!(geometry.side && geometry.top < 4 && !geometry.overflow && geometry.switchHeight <= 40 && geometry.height - geometry.layoutHeight < 600)) {
+            // Balance has one additional privacy switch (up to 40px); retain the other layout bounds.
+            const controlsHeight = key === 'balance' ? 640 : 600
+            if (!(geometry.side && geometry.top < 4 && !geometry.overflow && geometry.switchHeight <= 40 && geometry.height - geometry.layoutHeight < controlsHeight)) {
               // Capture the failing selection before the finally block restores the fixture.
               await page.locator('.cm-preview-workspace').screenshot({ path: join(output, 'inspector-geometry-failure.png') })
             }
             assert.ok(geometry.side && geometry.top < 4 && !geometry.overflow, `${theme}/${width}/${name}/${key} stays in two bounded columns: ${JSON.stringify(geometry)}`)
-            assert.ok(geometry.switchHeight <= 40 && geometry.height - geometry.layoutHeight < 600, `${theme}/${width}/${name}/${key} controls stay compact with the layout picker expanded: ${JSON.stringify(geometry)}`)
+            assert.ok(geometry.switchHeight <= 40 && geometry.height - geometry.layoutHeight < controlsHeight, `${theme}/${width}/${name}/${key} controls stay compact with the layout picker expanded: ${JSON.stringify(geometry)}`)
           }
         }
       }

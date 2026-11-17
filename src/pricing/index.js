@@ -9,9 +9,14 @@ window.__ModuleLoader__.load({
     let createPortal = null
     try { createPortal = require('react-dom')?.createPortal ?? null } catch {}
     const runFields = ['at', 'before', 'after', 'days', 'sessions', 'skipped']
+    const validDetail = row => typeof row?.sessionId === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(row.date) && typeof row.model === 'string'
+      && ['usage', 'ledgerModelMissing', 'logModelMissing', 'dayModelMissing', 'logMissing'].includes(row.reason)
+      && Array.isArray(row.fields) && row.fields.every(item => ['input', 'output', 'cacheRead', 'cacheWrite', 'reasoning', 'calls'].includes(item?.field)
+        && Number.isFinite(item.ledger) && item.ledger >= 0 && Number.isFinite(item.log) && item.log >= 0)
     const isRequestKey = key => ['deepseek-official:deepseek-web-search', 'deepseek-official:deepseek-web-fetch', 'deepseek-official:deepseek-search-api', 'deepseek-official:deepseek-fetch-api', 'deepseek-official:deepseek-search-server'].includes(key)
     const historySchema = { parse: value => {
-      if (!Array.isArray(value) || !value.every(row => runFields.every(key => Number.isFinite(row?.[key]) && row[key] >= 0) && (row.model === undefined || typeof row.model === 'string'))) throw new Error('Invalid recalculation history')
+      if (!Array.isArray(value) || !value.every(row => runFields.every(key => Number.isFinite(row?.[key]) && row[key] >= 0) && (row.model === undefined || typeof row.model === 'string')
+        && (row.skippedDetails === undefined || Array.isArray(row.skippedDetails) && row.skippedDetails.every(validDetail)))) throw new Error('Invalid recalculation history')
       return value
     } }
     const resultSchema = { parse: value => {
@@ -226,33 +231,185 @@ window.__ModuleLoader__.load({
             : el('p', { className: 'cm-hint' }, en ? 'All bundled models are mounted.' : '内置模型均已挂载。')) : null)
     }
 
+    /* PEAK_PANEL_SOURCE */
+
+    function PeakScheduleEditor({ value, onChange, locale, defaults = [] }) {
+      const en = locale === 'en', windows = value.peakWindows
+      const text = rows => rows.map(w => w.start + '-' + w.end).join(', ')
+      const [input, setInput] = useState(() => text(windows ?? defaults)), [error, setError] = useState('')
+      useEffect(() => setInput(text(windows ?? defaults)), [JSON.stringify(windows), JSON.stringify(defaults)])
+      const write = (key, next) => { const row = { ...value }; if (next === undefined) delete row[key]; else row[key] = next; onChange(row) }
+      const saveWindows = () => {
+        const parts = input.trim() ? input.split(/[,，]/).map(s => s.trim()) : []
+        const rows = parts.map(part => { const hit = part.match(/^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$/); return hit ? { start: Number(hit[1]), end: Number(hit[2]) } : null })
+        if (rows.length > 24 || rows.some(w => !w || w.start >= 24 || w.end > 24 || w.start === w.end)) { setError(en ? 'Use UTC hours, e.g. 1-4, 6-10 or 22-2.' : '填写 UTC 小时，例如 1-4, 6-10，跨午夜可填 22-2。'); return }
+        setError(''); write('peakWindows', rows)
+      }
+      return el('fieldset', { className: 'cm-peak-schedule' }, el('legend', null, en ? 'Peak schedule' : '峰谷时段'),
+        el('label', { className: 'cm-check' }, el('input', { type: 'checkbox', checked: windows !== undefined, onChange: e => { setError(''); write('peakWindows', e.target.checked ? structuredClone(defaults) : undefined) } }), en ? 'Override peak hours' : '自定义峰时段'),
+        windows !== undefined ? el('label', { className: 'cm-field' }, en ? 'Peak hours (UTC)' : '峰时段（UTC）', el('input', { className: 'cm-input', value: input, onChange: e => setInput(e.target.value), onBlur: saveWindows, onKeyDown: e => { if (e.key === 'Enter') { e.preventDefault(); saveWindows() } } })) : null,
+        el('label', { className: 'cm-field' }, en ? 'Calendar' : '日历规则', el('select', { className: 'cm-input', 'aria-label': en ? 'Calendar' : '日历规则', value: value.peakSchedule ?? '', onChange: e => write('peakSchedule', e.target.value || undefined) },
+          ...[['', '沿用上级／渠道默认', 'Inherit channel/default'], ['daily', '每天', 'Every day'], ['deepseek', '北京时间工作日', 'Beijing weekdays'], ['utc-weekdays', 'UTC 工作日', 'UTC weekdays'], ['ollama', 'Ollama Cloud', 'Ollama Cloud'], ['volcengine', '火山方舟', 'Volcano Ark']].map(([id, zh, english]) => el('option', { key: id, value: id }, en ? english : zh)))),
+        el('label', { className: 'cm-field' }, en ? 'Holidays' : '节假日', el('select', { className: 'cm-input', 'aria-label': en ? 'Holidays' : '节假日', value: value.peakHolidays === null ? 'none' : Array.isArray(value.peakHolidays) ? 'custom' : 'inherit', onChange: e => write('peakHolidays', e.target.value === 'none' ? null : e.target.value === 'custom' ? [] : undefined) },
+          el('option', { value: 'inherit' }, en ? 'Inherit' : '沿用上级／渠道默认'), el('option', { value: 'none' }, en ? 'No holiday table' : '不使用节假日表'), el('option', { value: 'custom' }, en ? 'Custom dates' : '自定义日期'))),
+        Array.isArray(value.peakHolidays) ? el('label', { className: 'cm-field' }, en ? 'Off-peak Beijing dates' : '全天谷价日期（北京时间）', el('input', { className: 'cm-input', key: JSON.stringify(value.peakHolidays), defaultValue: value.peakHolidays.join(', '), placeholder: '2026-11-01, 2026-11-02', onBlur: e => {
+          const dates = e.target.value.split(/[,，\s]+/).filter(Boolean)
+          if (dates.length > 366 || dates.some(day => !/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(Date.parse(day + 'T00:00:00Z')) || new Date(day + 'T00:00:00Z').toISOString().slice(0, 10) !== day)) { setError(en ? 'Use valid YYYY-MM-DD dates.' : '请填写有效的 YYYY-MM-DD 日期。'); return }
+          setError(''); write('peakHolidays', [...new Set(dates)].sort())
+        } })) : null,
+        error ? el('p', { className: 'cm-err', role: 'alert' }, error) : null,
+        el('p', { className: 'cm-hint' }, en ? 'Hours use UTC; Beijing time is UTC + 8. Windows include the start and exclude the end. Empty hours mean all off-peak. Model settings override channel settings.' : '小时采用 UTC，北京时间减 8 小时后填写。包含起点、不含终点，时段留空表示全天谷价。模型设置优先于渠道设置。'))
+    }
+
+    const rateFields = ['cacheMiss', 'cacheHit', 'output', 'cacheWrite', 'reasoning']
+    const rawRate = (row, field) => row?.[field] ?? (field === 'cacheMiss' ? row?.input : field === 'cacheHit' ? row?.cachedInput ?? row?.cacheRead ?? row?.cacheMiss ?? row?.input : undefined) ?? null
+    const withRateFactors = (entry, tier, fields, factor) => ({ ...entry, separateMultipliers: true,
+      multipliers: { ...(entry.separateMultipliers ? entry.multipliers : {}), ...Object.fromEntries(fields.map(field => [tier + '.' + field, factor])) } })
+
+    function MultiplierInput({ value, label, locale, rates, disabled = false, onCommit }) {
+      const formatted = value == null ? '' : String(value)
+      const [text, setText] = useState(formatted), [invalid, setInvalid] = useState(false), dirty = useRef(false)
+      useEffect(() => { if (!dirty.current) setText(formatted) }, [formatted])
+      const reset = () => { dirty.current = false; setInvalid(false); setText(formatted) }
+      const commit = () => {
+        if (!dirty.current) return
+        if (!text.trim()) { reset(); return }
+        const factor = Number(text)
+        if (!Number.isFinite(factor) || factor < 0 || rates.some(rate => rate != null && !Number.isFinite(rate * factor))) { setInvalid(true); return }
+        dirty.current = false; setInvalid(false); setText(String(factor)); onCommit(factor)
+      }
+      return el('input', { className: 'cm-input cm-factor-input', type: 'number', min: 0, step: 'any', value: text, disabled,
+        'aria-label': label, 'aria-invalid': invalid, placeholder: locale === 'en' ? 'Mixed' : '各项不同',
+        title: invalid ? (locale === 'en' ? 'Enter a finite, non-negative multiplier.' : '请输入有效的非负倍率。') : label,
+        onChange: event => { dirty.current = true; setInvalid(false); setText(event.target.value) }, onBlur: commit,
+        onKeyDown: event => { if (event.key === 'Enter') { event.preventDefault(); commit() } if (event.key === 'Escape') { event.stopPropagation(); reset() } } })
+    }
+
+    function TierMultiplier({ value, tier, title, locale, priceEditor, onChange }) {
+      const factors = rateFields.map(field => priceEditor.priceFactor(value, tier + '.' + field))
+      const factor = factors.every(number => number === factors[0]) ? factors[0] : null
+      const label = title + (locale === 'en' ? ' · Set all multipliers' : ' · 统一设置倍率')
+      const rates = [value, ...(value.rateHistory ?? [])].flatMap(row => rateFields.map(field => rawRate(tier === 'base' ? row : row[tier], field)))
+      return el('label', { className: 'cm-tier-multiplier' }, locale === 'en' ? 'Set all multipliers' : '统一设置倍率',
+        el(MultiplierInput, { value: factor, label, locale, rates, onCommit: number => onChange(withRateFactors(value, tier, rateFields, number)) }))
+    }
+
+    function RateField({ value, tier = 'base', field, title, label, locale, currency, priceEditor, t, onChange }) {
+      const row = tier === 'base' ? value : value[tier], number = rawRate(row, field), path = tier + '.' + field
+      const optional = field === 'cacheWrite' || field === 'reasoning', factor = priceEditor.priceFactor(value, path)
+      const commit = (number, factor) => {
+        const nextRow = { ...row }
+        if (number === null) delete nextRow[field]; else nextRow[field] = number
+        if (field === 'cacheMiss') delete nextRow.input
+        if (field === 'cacheHit') { delete nextRow.cachedInput; delete nextRow.cacheRead }
+        const next = tier === 'base' ? nextRow : { ...value, [tier]: nextRow }
+        onChange(factor === undefined ? next : withRateFactors(next, tier, [field], factor))
+      }
+      return el('div', { className: 'cm-rate-field' }, el('span', null, title),
+        el('div', { className: 'cm-rate-input' }, el('span', { className: 'cm-custom-amount' },
+          el('span', { 'aria-hidden': true }, currency === 'CNY' ? '¥' : '$'),
+          el(priceEditor.PriceInput, { value: number, entry: value, path, plain: true, t, label,
+            emptyMode: optional ? 'clear' : 'ignore',
+            placeholder: field === 'cacheWrite' ? (locale === 'en' ? 'Cached input rate' : '跟随缓存读取') : field === 'reasoning' ? (locale === 'en' ? 'Included in output' : '含在输出中') : '0', onCommit: commit })),
+          el('span', { className: 'cm-rate-times', 'aria-hidden': true }, '×'),
+          el(MultiplierInput, { value: factor, label: label + (locale === 'en' ? ' · Multiplier' : ' · 倍率'), locale, rates: [number], disabled: number == null,
+            onCommit: number => onChange(withRateFactors(value, tier, [field], number)) })))
+    }
+
+    function PeakPriceEditor({ value, onChange, locale, defaults, t, priceEditor, label = '', currency = value.currency }) {
+      const en = locale === 'en', enabled = value.billingMode === 'deepseek-peak' || !!(value.peak || value.offPeak)
+      const base = Object.fromEntries(rateFields.map((field, index) => [field, rawRate(value, field) ?? (index < 3 ? 0 : null)]).filter(([, number]) => number !== null))
+      return el('details', { className: 'cm-custom-more' }, el('summary', null, en ? 'Peak / off-peak pricing' : '峰谷价格与时段'),
+        el('label', { className: 'cm-check' }, el('input', { type: 'checkbox', checked: enabled, onChange: e => {
+          const next = { ...value, billingMode: e.target.checked ? 'deepseek-peak' : 'flat' }
+          if (e.target.checked) {
+            next.multipliers = { ...(value.separateMultipliers ? value.multipliers : {}) }; next.separateMultipliers = true
+            for (const tier of ['peak', 'offPeak']) if (!value[tier]) {
+              next[tier] = { ...base }
+              for (const field of rateFields) next.multipliers[tier + '.' + field] = priceEditor.priceFactor(value, 'base.' + field)
+            }
+          }
+          else { delete next.peak; delete next.offPeak }
+          onChange(next)
+        } }), en ? 'Enable peak / off-peak prices' : '启用峰谷价格'),
+        enabled ? el(Fragment, null, ...['peak', 'offPeak'].map(tier => {
+          const title = tier === 'peak' ? (en ? 'Peak' : '峰价') : (en ? 'Off-peak' : '谷价')
+          return el('fieldset', { key: tier, 'data-price-tier': tier }, el('legend', null, title),
+            el(TierMultiplier, { value, tier, title: label + ' · ' + title, locale, priceEditor, onChange }),
+            el('div', { className: 'cm-custom-grid' }, ...[['cacheMiss', '输入', 'Input'], ['cacheHit', '缓存读取', 'Cached input'], ['output', '输出', 'Output'], ['cacheWrite', '缓存写入', 'Cache write'], ['reasoning', '单独推理', 'Reasoning']].map(([field, zh, english]) =>
+              el(RateField, { key: field, value, tier, field, title: en ? english : zh, label: label + ' · ' + title + ' · ' + (en ? english : zh), locale, currency, priceEditor, t, onChange }))))
+        }), el(PeakScheduleEditor, { value, onChange, locale, defaults })) : null)
+    }
+
+    function ProviderScheduleSettings({ state, draft, setDraft, locale }) {
+      const en = locale === 'en', config = draft ?? state.config
+      const [provider, setProvider] = useState('deepseek')
+      const id = provider.trim().toLowerCase().replace(/^llm-/, '')
+      const table = config.prices?.providers?.[id] ?? { models: {} }
+      const names = [...new Set(['deepseek', ...Object.keys(config.prices?.providers ?? {}), ...Object.keys(state.today?.byProviderModel ?? {}).map(key => key.split(':')[0])])].sort()
+      return el('details', { className: 'cm-provider-schedules' }, el('summary', null, en ? 'Channel peak schedules' : '按渠道设置峰谷时段'),
+        el('label', { className: 'cm-field' }, en ? 'Provider ID' : '渠道 ID', el('input', { className: 'cm-input', list: 'cm-peak-providers', value: provider, onChange: e => setProvider(e.target.value) })),
+        el('datalist', { id: 'cm-peak-providers' }, ...names.map(name => el('option', { key: name, value: name }))),
+        /^[a-z0-9][a-z0-9_.-]{0,99}$/.test(id) && !['constructor', 'prototype', '__proto__'].includes(id) ? el(PeakScheduleEditor, { key: id, value: table, locale, defaults: id === 'ollama-cloud' ? [{ start: 12, end: 18 }] : config.peakWindows, onChange: value => setDraft({ ...config, prices: { ...config.prices, providers: { ...config.prices.providers, [id]: value } } }) }) : null,
+        el('p', { className: 'cm-hint' }, en ? 'Use the channel ID from model pricing. Applies to peak-enabled models and is retained when official prices sync.' : '填写模型定价中显示的渠道 ID。规则用于已启用峰谷价格的模型，同步官方价格时会保留。'))
+    }
+
+    function ContextThreshold({ value, locale, onChange }) {
+      const [text, setText] = useState(String(value)), [invalid, setInvalid] = useState(false)
+      useEffect(() => { setText(String(value)); setInvalid(false) }, [value])
+      const save = () => {
+        const next = Number(text)
+        if (!text.trim() || !Number.isSafeInteger(next) || next <= 0) { setInvalid(true); return }
+        setInvalid(false); onChange(next)
+      }
+      const label = locale === 'en' ? 'Input Token threshold' : '输入 Token 阈值'
+      return el('label', { className: 'cm-field' }, label, el('input', { className: 'cm-input', type: 'number', min: 1, step: 1,
+        value: text, 'aria-label': label, 'aria-invalid': invalid,
+        title: invalid ? (locale === 'en' ? 'Enter a positive integer.' : '请输入正整数。') : label,
+        onChange: event => { setText(event.target.value); setInvalid(false) }, onBlur: save,
+        onKeyDown: event => { if (event.key === 'Enter') { event.preventDefault(); save() } if (event.key === 'Escape') { event.stopPropagation(); setText(String(value)); setInvalid(false) } } }))
+    }
+
+    function LongContextEditor({ value, label, locale, onChange, t, priceEditor, fields }) {
+      const en = locale === 'en', tier = value.longContext, title = en ? 'Long context' : '长上下文'
+      return el('fieldset', { className: 'cm-long-context' }, el('legend', null, title),
+        el('label', { className: 'cm-check' }, el('input', { type: 'checkbox', checked: !!tier, onChange: event => {
+          const next = { ...value }
+          if (event.target.checked) {
+            next.longContext = { aboveInputTokens: 272000, ...Object.fromEntries(rateFields.map(field => [field, rawRate(value, field)]).filter(([, rate]) => rate != null)) }
+            if (value.separateMultipliers) for (const field of rateFields) Object.assign(next, withRateFactors(next, 'longContext', [field], priceEditor.priceFactor(value, 'base.' + field)))
+          } else delete next.longContext
+          onChange(next)
+        } }), en ? 'Enable long-context prices' : '启用长上下文价格'),
+        tier ? el(Fragment, null,
+          el(ContextThreshold, { value: tier.aboveInputTokens, locale, onChange: aboveInputTokens => onChange({ ...value, longContext: { ...tier, aboveInputTokens } }) }),
+          el('p', { className: 'cm-hint' }, en ? 'Applies when input plus cache read/write exceeds this threshold.' : '输入与缓存读写 Token 合计超过阈值时使用。'),
+          el(TierMultiplier, { value, tier: 'longContext', title: label + ' · ' + title, locale, priceEditor, onChange }),
+          el('div', { className: 'cm-custom-grid' }, ...fields.map(([field, name]) => el(RateField, { key: field, value, tier: 'longContext', field, title: name,
+            label: label + ' · ' + title + ' · ' + name, locale, currency: value.currency, priceEditor, t, onChange })))) : null)
+    }
+
     function CustomPriceEditor({ value, label, locale, onChange, t, priceEditor }) {
       const en = locale === 'en'
-      const { PriceInput, priceFactor, setPriceFactor, multiplierOptions } = priceEditor
+      const { priceFactor } = priceEditor
       const fields = [['cacheMiss', en ? 'Input · cache miss' : '输入 · 未命中缓存'], ['cacheHit', en ? 'Cached input' : '缓存读取'], ['output', en ? 'Output' : '输出'], ['cacheWrite', en ? 'Cache write' : '缓存写入'], ['reasoning', en ? 'Separate reasoning' : '单独推理费用']]
-      const edit = (key, number, factor) => {
-        const next = { ...value }
-        if (number === null) delete next[key]; else next[key] = number
-        setPriceFactor(next, 'base.' + key, factor)
-        onChange(next)
-      }
-      const field = ([key, title]) => el('label', { key }, title, el('span', { className: 'cm-custom-amount' },
-        el('span', { 'aria-hidden': true }, value.currency === 'CNY' ? '¥' : '$'), el(PriceInput, { entry: value, value: value[key] ?? null, path: 'base.' + key, t,
-          emptyMode: ['cacheWrite', 'reasoning'].includes(key) ? 'clear' : 'ignore', label: label + ' · ' + title,
-          placeholder: key === 'cacheWrite' ? (en ? 'Same as cached input' : '跟随缓存读取') : key === 'reasoning' ? (en ? 'Included in output' : '含在输出中') : '0',
-          onCommit: (number, factor) => edit(key, number, factor) })))
+      const field = ([key, title]) => el(RateField, { key, value, field: key, title, label: label + ' · ' + title, locale, currency: value.currency, priceEditor, t, onChange })
+      const tiers = [['base', en ? 'Base' : '基础价'], ...(['peak', 'offPeak'].filter(tier => value[tier]).map(tier => [tier, tier === 'peak' ? (en ? 'Peak' : '峰价') : (en ? 'Off-peak' : '谷价')])), ...(value.longContext ? [['longContext', en ? 'Long context' : '长上下文']] : [])]
       return el('fieldset', { className: 'cm-custom-price', 'aria-label': label + (en ? ' · Custom price' : ' · 自定义价格') },
         el('legend', null, en ? 'Custom price · per 1M tokens' : '自定义价格 · 每百万 Token'),
         el('div', { className: 'cm-custom-head' }, el('span', null, en ? 'Only this channel and model' : '仅用于此渠道的这个模型'),
           el('label', null, en ? 'Currency' : '币种', el('select', { className: 'cm-input', value: value.currency, onChange: event => onChange({ ...value, currency: event.target.value }) },
             el('option', { value: 'USD' }, en ? 'USD · US dollar' : 'USD · 美元'), el('option', { value: 'CNY' }, en ? 'CNY · Yuan' : 'CNY · 人民币')))),
+        el(TierMultiplier, { value, tier: 'base', title: label + (en ? ' · Base' : ' · 基础价'), locale, priceEditor, onChange }),
         el('div', { className: 'cm-custom-grid' }, ...fields.slice(0, 3).map(field)),
-        multiplierOptions(value, t, separate => onChange({ ...value, separateMultipliers: separate, multipliers: {} })),
+        el(PeakPriceEditor, { value, onChange, locale, t, priceEditor, label, defaults: [{ start: 1, end: 4 }, { start: 6, end: 10 }] }),
         el('div', { className: 'cm-custom-effective', role: 'status' },
           el('div', { className: 'cm-effective-heading' }, el('span', null, en ? 'Effective prices' : '实际单价'), el('small', null, en ? 'Price × multiplier / 1M tokens' : '单价 × 倍率 / 百万 Token')),
-          el('div', { className: 'cm-effective-grid' }, ...fields.slice(0, 3).map(([key, title]) => el('div', { key }, el('span', null, title), el('strong', null, (value.currency === 'CNY' ? '¥' : '$') + Number((value[key] * priceFactor(value, 'base.' + key)).toPrecision(8)).toLocaleString(en ? 'en-US' : 'zh-CN', { maximumFractionDigits: 8 })))))),
+          ...tiers.map(([tier, title]) => el('div', { key: tier, className: 'cm-effective-tier', 'data-effective-tier': tier }, tiers.length > 1 ? el('span', null, title) : null,
+            el('div', { className: 'cm-effective-grid' }, ...fields.slice(0, 3).map(([key, title]) => el('div', { key }, el('span', null, title), el('strong', null, (value.currency === 'CNY' ? '¥' : '$') + Number((rawRate(tier === 'base' ? value : value[tier], key) * priceFactor(value, tier + '.' + key)).toPrecision(8)).toLocaleString(en ? 'en-US' : 'zh-CN', { maximumFractionDigits: 8 })))))))),
         el('details', { className: 'cm-custom-more' }, el('summary', null, en ? 'More billing fields' : '更多计费项'),
           el('div', { className: 'cm-custom-grid' }, ...fields.slice(3).map(field)),
+          el(LongContextEditor, { value, label, locale, onChange, t, priceEditor, fields }),
           el('p', { className: 'cm-hint' }, en ? 'Leave reasoning blank when it is included in output. Leave cache write blank to use the cached input rate.' : '推理已包含在输出中时无需另填。缓存写入留空则使用缓存读取价格。')),
         el('p', { className: 'cm-hint' }, en ? 'Enter or leave a field to save. Switching the price source keeps your custom values.' : '回车或离开输入框后保存；切换价格来源会保留已填的自定义价格。'))
     }
@@ -326,9 +483,10 @@ window.__ModuleLoader__.load({
             else next[key] = value
             if (value === '__custom__' && !pricesNow.custom?.[key]) {
               const split = key.indexOf(':'), resolved = resolveClientPrice(key.slice(0, split), key.slice(split + 1), { ...config, ...draft })
-              const entry = resolved.entry ?? {}, custom = { currency: resolved.currency ?? 'USD', billingMode: 'flat', ...priceEditor?.priceMultiplierSettings(entry),
+              const entry = resolved.entry ?? {}, custom = { ...entry, currency: resolved.currency ?? 'USD', billingMode: entry.billingMode === 'deepseek-peak' ? 'deepseek-peak' : 'flat', ...priceEditor?.priceMultiplierSettings(entry),
                 cacheMiss: entry.cacheMiss ?? entry.input ?? 0, cacheHit: entry.cacheHit ?? entry.cachedInput ?? entry.cacheMiss ?? entry.input ?? 0, output: entry.output ?? 0,
                 ...(entry.cacheWrite !== undefined ? { cacheWrite: entry.cacheWrite } : {}), ...(entry.reasoning !== undefined ? { reasoning: entry.reasoning } : {}) }
+              delete custom.unpriced
               setDraft({ ...draft, priceOverrides: next, prices: { ...pricesNow, custom: { ...pricesNow.custom, [key]: custom } } })
             } else setDraft({ ...draft, priceOverrides: next })
           }
@@ -447,7 +605,12 @@ window.__ModuleLoader__.load({
                   el('button', { type: 'button', className: 'cm-catalog-model', 'aria-label': name + (en ? ' · Edit price' : ' · 编辑价格'), 'aria-expanded': active, onClick: () => setEditing(active ? null : key) },
                     el('span', { className: 'cm-catalog-model-name' }, el('strong', null, name), variants ? el('small', null, variants) : null),
                     el(RateSummary, { entry, currency, priceEditor, locale }), el(Chevron, { className: 'cm-catalog-edit-caret', open: active })),
-                  active ? el('div', { className: 'cm-catalog-editor' }, renderEditor(id, model, entry)) : null)
+                  active ? el('div', { className: 'cm-catalog-editor' }, renderEditor(id, model, entry),
+                    el(PeakPriceEditor, { value: entry, locale, t, priceEditor, label: name, currency, defaults: prices.providers?.[id]?.peakWindows ?? draft.peakWindows, onChange: value => {
+                      const next = id === 'deepseek' ? { ...prices, ...(model === '__default__' ? { default: value } : { models: { ...prices.models, [model]: value } }) }
+                        : { ...prices, providers: { ...prices.providers, [id]: { ...prices.providers[id], models: { ...prices.providers[id].models, [model]: value } } } }
+                      setDraft({ ...draft, prices: next })
+                    } })) : null)
               }),
               ids.length > limit ? el('button', { type: 'button', className: 'cm-catalog-more', onClick: () => setLimits(value => ({ ...value, [id]: limit + 16 })) }, en ? `Show more · ${ids.length - limit} remaining` : `显示更多 · 还有 ${ids.length - limit} 个`) : null) : null)
         }),
@@ -469,6 +632,14 @@ window.__ModuleLoader__.load({
         return formatMoneyUsd(typeof native === 'number' && rate > 0 ? native / rate : row[field], state.config)
       }
       const allLabel = en ? 'All models' : '全部模型'
+      const reasons = en ? { usage: 'Usage differs', ledgerModelMissing: 'Model missing from ledger', logModelMissing: 'Model missing from logs', dayModelMissing: 'Model missing from daily totals', logMissing: 'No replayable logs' }
+        : { usage: '用量不一致', ledgerModelMissing: '账本缺少此模型', logModelMissing: '日志缺少此模型', dayModelMissing: '当日汇总缺少此模型', logMissing: '无可回放日志' }
+      const skipped = row => row.skippedDetails?.length ? el('details', { key: row.at, className: 'cm-repricing-skipped' },
+        el('summary', null, new Date(row.at).toLocaleString(locale) + ' · ' + row.skipped + (en ? ' unchanged' : ' 条未重算')),
+        el('ul', null, ...row.skippedDetails.map((item, i) => el('li', { key: i },
+          el('div', null, [item.sessionId, item.date, item.model].filter(Boolean).join(' · ')),
+          el('div', null, reasons[item.reason]),
+          ...item.fields.map(field => el('div', { key: field.field }, `${field.field}: ${en ? 'ledger' : '账本'} ${field.ledger} − ${en ? 'log' : '日志'} ${field.log} = ${field.ledger - field.log}`)))))) : null
       const models = useMemo(() => [...new Set([state.today, state.month, ...(state.history ?? [])]
         .flatMap(day => Object.keys(day?.byProviderModel ?? {})))].filter(key => key.indexOf(':') > 0).sort(), [state.today, state.month, state.history])
       const options = useMemo(() => [{ value: '', label: allLabel }, ...models.map(key => ({ value: key, label: key }))], [models, allLabel])
@@ -503,7 +674,7 @@ window.__ModuleLoader__.load({
         runs.length ? el('details', { className: 'cm-repricing-history' }, el('summary', null, en ? 'Recalculation records · original amounts retained' : '重算记录 · 原金额已保留'),
           el('div', { className: 'cm-stat-scroll' }, el('table', { className: 'cm-stat-table' },
             el('thead', null, el('tr', null, ...(en ? ['Time', 'Scope', 'Before', 'After', 'Session/day records'] : ['重算时间', '范围', '原金额', '重算后', '会话日期记录']).map(s => el('th', { key: s, scope: 'col' }, s)))),
-            el('tbody', null, ...runs.map(row => el('tr', { key: row.at }, el('td', null, new Date(row.at).toLocaleString(locale)), el('td', null, row.model || allLabel), el('td', null, money(row, 'before')), el('td', null, money(row, 'after')), el('td', null, row.sessions))))))) : null)
+            el('tbody', null, ...runs.map(row => el('tr', { key: row.at }, el('td', null, new Date(row.at).toLocaleString(locale)), el('td', null, row.model || allLabel), el('td', null, money(row, 'before')), el('td', null, money(row, 'after')), el('td', null, row.sessions)))))), ...runs.map(skipped)) : null)
     }
 
     function ProviderBillingSettings({ state, draft, setDraft, locale }) {
@@ -525,6 +696,45 @@ window.__ModuleLoader__.load({
         el('p', { className: 'cm-note' }, text('适用于该渠道的所有模型，模型单独设置优先。修改后更新历史 API/Plan 归属，保留 Token 和 API 等值金额。额度查询开关单独控制。', 'Applies to all models on this channel; model overrides take priority. Changes update historical API/Plan classification while preserving tokens and API-equivalent amounts. Quota queries are controlled separately.')))
     }
 
+    function ExternalUsagePanel({ state, t, formatMoneyUsd, formatTokens, helpers }) {
+      const { Card, displayCostOf } = helpers
+      const ext = state.externalUsage
+      if (!ext) return null
+      const config = state.config
+      const amount = day => formatMoneyUsd(displayCostOf(day, config), config)
+      const usage = day => t('callsTokens', { calls: day.calls, input: formatTokens(day.input), cache: formatTokens(day.cacheRead + day.cacheWrite), output: formatTokens(day.output) })
+      const sum = (a, b) => ({ calls: a.calls + b.calls, input: a.input + b.input, output: a.output + b.output, cacheRead: a.cacheRead + b.cacheRead, cacheWrite: a.cacheWrite + b.cacheWrite, cost: displayCostOf(a, config) + b.cost, apiCost: displayCostOf(a, config) + b.cost })
+      const row = (label, day) => el('tr', { key: label }, el('td', null, label), el('td', { className: 'num' }, String(day.calls)), el('td', { className: 'num' }, formatTokens(day.input)), el('td', { className: 'num' }, formatTokens(day.cacheRead + day.cacheWrite)), el('td', { className: 'num' }, formatTokens(day.output)), el('td', { className: 'num' }, amount(day)))
+      const table = rows => el('div', { className: 'cm-scroll' }, el('table', { className: 'cm-table' }, el('thead', null, el('tr', null, el('th', null, t('colDate')), ...['colCalls', 'colInTok', 'colCacheTok', 'colOutTok', 'colCost'].map(k => el('th', { className: 'num' }, t(k))))), el('tbody', null, rows)))
+      return el('section', { className: 'cm-budget' },
+        el('h3', { className: 'cm-h' }, t('externalUsage')),
+        ext.stale ? el('p', { className: 'cm-note' }, t('externalStale')) : null,
+        el('div', { className: 'cm-cards' }, ['today', 'month', 'total'].map((key, i) => {
+          const combined = sum(state[key], ext.combined[key])
+          return el(Card, { key, title: t('combinedUsage') + ' · ' + t(['cardToday', 'cardMonth', 'cardTotal'][i]), value: amount(combined), sub: usage(combined) })
+        })),
+        ...ext.sources.map(source => el('details', { key: source.source },
+          el('summary', null, source.source + ' · ' + t('cardToday') + ' ' + amount(source.today) + ' · ' + t('cardMonth') + ' ' + amount(source.month) + ' · ' + usage(source.today)),
+          table(['today', 'month', 'total'].map((key, i) => row(t(['cardToday', 'cardMonth', 'cardTotal'][i]), source[key]))),
+          el('p', { className: 'cm-note' }, t('externalHistory')),
+          table(source.history.map(day => row(day.date, day))))))
+    }
+
+    function BillingCheck({ state, onPrices }) {
+      const config = state.config, en = (config.locale === 'auto' ? config.activeLocale : config.locale) === 'en'
+      const text = (zh, english) => en ? english : zh
+      const currency = config.prices?.currency === 'CNY' ? 'CNY' : 'USD'
+      const mismatch = config.currency === 'CNY' && currency === 'USD'
+      return el('details', { className: 'cm-note', 'data-billing-check': true, open: mismatch || undefined },
+        el('summary', null, text('计费核对', 'Check billing')),
+        el('p', null, text('当前 DeepSeek 价表：', 'Active DeepSeek price table: ') + currency + text('；显示币种：', '; display currency: ') + config.currency),
+        mismatch ? el('p', { 'data-billing-currency-mismatch': true }, text('当前金额由美元单价换算，美元价 × 汇率不等于官网人民币报价。按人民币账单核对时，请选择人民币官方价并同步；只切换显示币种不会更换价表。', 'Amounts currently convert USD rates. USD rates × exchange rate differ from official CNY prices. To compare with a CNY bill, select CNY official prices and sync them; changing the display currency does not change the price table.')) : null,
+        config.pricingCurrency !== currency ? el('p', null, text('所选同步币种尚未生效，当前仍使用 ', 'The selected sync currency is not active yet; billing still uses ') + currency) : null,
+        el('p', null, text('金额口径：', 'Cost basis: ') + text(config.showTotalWithPlan ? '含套餐 API 等值，不等于账户扣款。' : 'API 费用；套餐等值已排除。', config.showTotalWithPlan ? 'Includes subscription API-equivalent costs, not account deductions.' : 'API costs; subscription equivalents are excluded.')),
+        el('p', null, text('核对时使用同一账户、渠道和时段；费用明细可查看每次调用的缓存、输出、费率和搜索请求费。自定义价格、倍率与历史价表也会影响金额。', 'Compare the same account, provider and time range. Cost details show each call’s cache, output, rates and search request fees. Custom prices, multipliers and historical rates also affect totals.')),
+        onPrices ? el('button', { type: 'button', className: 'cm-btn small', onClick: onPrices }, text('查看并同步官方价表', 'Review and sync official prices')) : null)
+    }
+
     async function mount(ctx) {
       const unmount = await ctx.get('remote').$mount(CONTRIBUTION)
       ctx.effect(() => () => unmount(), 'cost-meter: pricing settings contribution')
@@ -540,7 +750,9 @@ window.__ModuleLoader__.load({
       style.textContent = '.cm-repricing-scope{display:grid;gap:8px;max-width:620px;margin:16px 0}.cm-repricing-scope>label{font-size:13px;color:var(--dsw-alias-label-secondary)}.cm-repricing-scope .cm-hint{margin:0;line-height:1.6}'
       style.textContent += '.cm-price-search{display:grid;gap:6px;min-width:0}.cm-price-search small{color:var(--dsw-alias-label-tertiary)}.cm-price-search select,.cm-price-search input{width:100%;min-width:0}.cm-repricing-warning{padding:12px;border:1px solid var(--dsw-alias-state-warn-primary,#c58a25);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}.cm-repricing-warning p{margin:8px 0 12px;line-height:1.6}.cm-repricing-history{margin-top:12px}.cm-repricing-history table{width:100%;text-align:left;font-variant-numeric:tabular-nums}.cm-repricing-history td,.cm-repricing-history th{padding:8px;border-bottom:1px solid var(--dsw-alias-border-l1)}'
       style.textContent += '.cm-repricing-history .cm-stat-scroll{overflow-x:auto;max-width:100%}.cm-repricing-history table{min-width:560px}.cm-repricing-history th{white-space:nowrap}.cm-repricing-history td:nth-child(2){min-width:150px;max-width:260px;overflow-wrap:anywhere}'
+      style.textContent += '.cm-repricing-skipped{margin-top:12px;overflow-wrap:anywhere}.cm-repricing-skipped summary{cursor:pointer}.cm-repricing-skipped ul{padding-left:18px}.cm-repricing-skipped li+li{margin-top:12px}'
       style.textContent += '.cm-pricing-page .cm-free-model{margin:0 0 12px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:transparent}.cm-pricing-page .cm-free-model>.cm-check{display:flex;align-items:center;gap:8px;margin:0;font-size:12px;line-height:20px;color:var(--dsw-alias-label-primary)}.cm-pricing-page .cm-free-model input{flex:none;width:16px;height:16px;margin:0;accent-color:var(--dsw-alias-state-business-primary)}.cm-pricing-page .cm-free-model>.cm-hint{display:block;margin:4px 0 0 24px;font-size:11px;line-height:1.5}'
+      style.textContent += '.cm-provider-schedules{margin:12px 0}.cm-provider-schedules>.cm-field{max-width:360px;margin:12px 0}.cm-peak-schedule,.cm-custom-more fieldset{min-width:0;margin:12px 0;padding:12px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px}.cm-peak-schedule{display:grid;gap:12px}.cm-custom-more .cm-check{display:flex;align-items:center;gap:8px;margin:12px 0}.cm-custom-more .cm-check input{width:auto;flex:none;margin:0}.cm-peak-schedule legend{font-size:12px}.cm-peak-schedule .cm-hint{margin:0;line-height:1.6}'
       style.textContent += '.cm-custom-price{grid-column:1/-1;display:grid;gap:14px;margin:4px 0 12px;padding:16px;border:1px solid var(--dsw-alias-border-l1);border-radius:var(--dsw-radius-lg,12px);background:var(--dsw-alias-bg-layer-1);min-width:0}.cm-custom-price legend{padding:0 6px;font-weight:500;font-size:13px}.cm-custom-price label{display:grid;gap:7px;font-size:12px;min-width:0;color:var(--dsw-alias-label-secondary)}.cm-custom-price .cm-input{width:100%;min-width:0}.cm-custom-head{display:flex;justify-content:space-between;align-items:center;gap:12px;color:var(--dsw-alias-label-secondary);font-size:12px}.cm-custom-head label{display:flex;align-items:center;gap:8px}.cm-custom-head select{width:auto!important}.cm-custom-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.cm-custom-amount{position:relative;display:block}.cm-custom-amount>span{position:absolute;inset-inline-start:11px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--dsw-alias-label-tertiary)}.cm-custom-amount input{padding-inline-start:28px}.cm-custom-more summary{cursor:pointer;font-size:12px;color:var(--dsw-alias-label-secondary)}.cm-custom-more .cm-custom-grid{grid-template-columns:repeat(2,minmax(0,1fr));margin:12px 0 8px}.cm-custom-price p{margin:0;line-height:1.6}@media(max-width:700px){.cm-custom-grid{grid-template-columns:1fr}.cm-custom-head{flex-wrap:wrap}}'
       document.head.appendChild(style)
       style.textContent += `
@@ -557,6 +769,7 @@ window.__ModuleLoader__.load({
         .cm-pricing-empty{margin:0;padding:32px 16px;text-align:center;color:var(--dsw-alias-label-tertiary);border:1px dashed var(--dsw-alias-border-l1);border-radius:12px;font-size:13px}
         .cm-model-matching .cm-custom-price{margin:0;padding:14px;background:var(--dsw-alias-bg-base);gap:12px;scroll-margin-block-start:12px}.cm-custom-head{flex-wrap:wrap}.cm-custom-head>span{flex:1;min-width:160px}.cm-custom-grid{grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr))}.cm-custom-price .cm-input{max-width:none;box-sizing:border-box;padding-top:8px;padding-bottom:8px}.cm-custom-price .cm-custom-amount input{padding-inline-start:28px}.cm-custom-price .cm-price-multiplier{align-items:center;gap:8px}.cm-custom-price .cm-price-multiplier label{display:inline-flex;align-items:center;gap:6px}.cm-custom-price .cm-price-multiplier input{width:auto;min-width:0}.cm-custom-price .cm-hint{font-size:11px;color:var(--dsw-alias-label-tertiary)}
         .cm-custom-effective{display:grid;gap:12px;padding:12px;background:var(--dsw-alias-bg-layer-1);border-radius:8px;font-size:12px;font-variant-numeric:tabular-nums}.cm-effective-heading{display:flex;justify-content:space-between;gap:6px;flex-wrap:wrap}.cm-effective-heading>span{font-weight:500}.cm-effective-heading small,.cm-effective-grid span{color:var(--dsw-alias-label-tertiary);font-size:11px}.cm-effective-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.cm-effective-grid>div{display:grid;gap:5px;min-width:0}.cm-effective-grid strong{font-size:14px;font-weight:600;overflow-wrap:anywhere}
+        .cm-rate-field{display:grid;gap:7px;min-width:0;font-size:12px;color:var(--dsw-alias-label-secondary)}.cm-rate-input{display:grid;grid-template-columns:minmax(0,1fr) auto 84px;gap:7px;align-items:center;min-width:0}.cm-rate-input .cm-input{width:100%;min-width:0;max-width:none;box-sizing:border-box}.cm-rate-times{color:var(--dsw-alias-label-tertiary)}.cm-rate-input .cm-factor-input{padding-inline:8px}.cm-custom-price .cm-tier-multiplier,.cm-tier-multiplier{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--dsw-alias-label-secondary)}.cm-tier-multiplier .cm-factor-input{width:100px;min-width:0;box-sizing:border-box}.cm-factor-input[aria-invalid=true]{border-color:var(--dsw-alias-state-danger-primary,#cf4e4e)}.cm-rate-input .cm-factor-input:disabled{opacity:.5}.cm-effective-tier{display:grid;gap:8px}.cm-effective-tier>span{font-size:11px;color:var(--dsw-alias-label-secondary)}.cm-custom-price>.cm-custom-grid{grid-template-columns:repeat(auto-fit,minmax(min(230px,100%),1fr))}
         .cm-pricing-page .cm-price-card{min-width:0;container:cm-price-editor / inline-size}.cm-pricing-page .cm-price-row{min-width:0}.cm-pricing-page .cm-price-row input{max-width:none;font-variant-numeric:tabular-nums}.cm-pricing-catalog .cm-catalog-vendor{margin-top:8px}
         @media(max-width:480px){.cm-model-matching .cm-match-row{padding:8px 10px}.cm-model-matching .cm-custom-price{padding:10px}.cm-custom-more .cm-custom-grid{grid-template-columns:1fr}.cm-effective-grid{gap:8px}.cm-model-identity{flex-basis:100%}}
       `
@@ -600,7 +813,7 @@ window.__ModuleLoader__.load({
         '@media (max-width:1023px){.cm-custom-grid,.cm-effective-grid,.cm-rate-summary{grid-template-columns:1fr}.cm-model-toolbar,.cm-custom-head,.cm-catalog-toolbar{flex-wrap:wrap}.cm-repricing-history table{min-width:480px}.cm-model-matching .cm-match-row{padding:8px 10px}}body[data-dsh-pocket-layout="mobile"] .cm-custom-grid{grid-template-columns:1fr}body[data-dsh-pocket-layout="mobile"] .cm-rate-summary{grid-template-columns:1fr}',
       ].join('')
       ctx.effect(() => () => style.remove(), 'cost-meter: pricing settings styles')
-      return props => props.mode === 'billing' ? el(ProviderBillingSettings, props) : props.mode === 'matching' ? el(Matching, props) : el(props.mode === 'catalog' ? Catalog : props.mode === 'restore' ? RestorePrices : History, { ...props, rpc })
+      return props => props.mode === 'external' ? el(ExternalUsagePanel, props) : props.mode === 'check' ? el(BillingCheck, props) : props.mode === 'peak-settings' ? el(PeakPanel, props) : props.mode === 'schedule' ? el(ProviderScheduleSettings, props) : props.mode === 'billing' ? el(ProviderBillingSettings, props) : props.mode === 'matching' ? el(Matching, props) : el(props.mode === 'catalog' ? Catalog : props.mode === 'restore' ? RestorePrices : History, { ...props, rpc })
     }
     return { mount, CONTRIBUTION }
   },

@@ -1,5 +1,246 @@
 # dsh-cost-meter 版本更新历史
 
+## v1.9.70-private.1（2026-11-17）
+
+合入上游 1.9.70，保留私人离线默认、关闭项凭据守卫与全局观察器移除。余额关闭时不读取模型路由，既有模型与费率不变。
+
+## v1.9.70(2026-11-16)—— 工作站与套餐模型价格匹配
+
+- 补齐第三方 DeepSeek、工作站与套餐别名，以及 Magpie 多层账号路由的价格匹配。
+- 保留渠道自有价格和手动映射，区分型号、免费及本地来源，修正转发后的套餐归属。
+- 旧账单保留原匹配规则，可按新规则显式重算。
+
+[更新说明 / Release notes](update-notes-1.9.70.md)
+
+## v1.9.69(2026-11-16)—— 长上下文价格与图标侧栏
+
+- 自定义价格增加长上下文阈值与单价编辑，保留原有价格档位。
+- 新增主动选择的图标侧栏布局，点击展开余额、预算和套餐等组件。
+- 验证 billion-context 0.1.215 与 dsh-codex-subscription 3.2.17 / 3.2.18。
+
+[更新说明 / Release notes](update-notes-1.9.69.md)
+
+## v1.9.68(2026-11-16)—— 历史费用重算与差异明细
+
+- Token 完整、调用次数不同的历史记录可以重算，原调用次数保持不变。
+- 未重算记录可展开查看会话、日期、模型及用量差值。
+- 本会话费用悬停提示注明是否包含子代理。
+
+[更新说明 / Release notes](update-notes-1.9.68.md)
+
+## v1.9.67(2026-11-15)—— 26 种显示币种与余额来源选择
+
+- 显示币种扩展至 26 种，官方与自定义余额可单独选择显示币种。
+- 官方余额可手动选择当前 DSH 登录账号钱包，默认保持模型 Key 优先。
+- 多账号列表与侧栏显示各账号余额，补齐改名和删除后的切换；空凭据不计数，相同 Key 合并显示。
+- 修复调整余额展示设置后余额行消失的问题，更新凭据来源说明。
+
+[更新说明 / Release notes](update-notes-1.9.67.md)
+
+## v1.9.66(2026-11-15)—— billion-context 兼容验证与余额凭据排查
+
+- 验证 billion-context 0.1.214 的实际发布包，更新兼容基线并加入持续集成。
+- 补充官方余额 HTTP 401 与旧 Key 更换说明，保留现有余额来源顺序。
+
+[更新说明 / Release notes](update-notes-1.9.66.md)
+
+## v1.9.65(2026-11-14)—— 套餐金额开关与账号余额、历史价格修复
+
+- 输入区套餐进度条新增“显示套餐余额”开关，默认开启。关闭后保留进度条，余额可在悬浮提示中查看，预览和保存状态同步。
+- 修复没有模型 API Key 时，模型设置读取失败阻断官方账号钱包查询的问题；手动刷新可重新读取失败的模型路由。
+- 历史价格差分共用已清洗的不可变价表分支，减少重复遍历和序列化，保留全部价格版本与时间点。
+- 自定义余额 `sum` 支持 `where` 精确过滤，可按 Magpie provider 汇总 WorkBuddy 积分。
+- 核对 dsh-codex-subscription 3.2.16 发布包与既有接入函数，将兼容基线更新至 3.2.16。
+
+[更新说明 / Release notes](update-notes-1.9.65.md)
+
+## v1.9.64(2026-11-10)—— Magpie 模型价格自动匹配
+
+- 适配 Magpie 自带接入、dsh-magpie-connect、dsh-magpie-connector 和 @zhiqiangme/dsh-magpie，按模型 ID 中的来源前缀自动匹配价格。
+- 切换模型后使用对应单价，保留手动定价、渠道专属价格、免费模型及本地模型规则。
+- 同步前后端价格解析，补充实际连接插件目录和连续模型切换回归。
+
+[更新说明 / Release notes](update-notes-1.9.64.md)
+
+## v1.9.63(2026-11-10)—— 额度与余额来源修复
+
+- 优先读取 Antigravity 的 daily 端点，修复额度滞后，并补齐异常响应的回退处理。
+- 官方余额跟随模型 API Key，保留手动选择账号和专用余额凭据的优先级。切换凭据或服务地址时清除旧余额与对账基准。
+- 核验 dsh-codex-subscription 3.2.8、3.2.9 的实际发布包，将兼容基线更新至 3.2.9。
+
+[更新说明 / Release notes](update-notes-1.9.63.md)
+
+## v1.9.62(2026-11-09)—— 合并卡片峰谷进度条修复
+
+- 修复合并卡片模式下峰谷进度条过薄、高光被裁切的问题，实际侧栏与显示预览完整呈现进度条。
+- Fix the thin peak-period track and clipped highlight in the merged sidebar card and its display preview.
+
+感谢 [@ansel-open](https://github.com/ansel-open) 在 [#487](https://github.com/Han-1413141/dsh-cost-meter/issues/487) 报告问题，并提供复现步骤及侧栏、显示预览截图。
+
+[更新说明 / Release notes](update-notes-1.9.62.md)
+
+## v1.9.61(2026-11-09)—— OpenDesign 设备码授权
+
+- 在 OpenDesign 额度卡点击“一键获取额度凭据”，浏览器批准后保存控制面密钥、读取工作区并刷新额度。
+- 修复授权等待期间跨宿主切换账号或工作区，以及手工修改凭据与旧授权写入之间的竞态。
+- 补充取消提示和中英文、浅深色、窄屏交互验证。
+
+[更新说明](update-notes-1.9.61.md) · [配置说明](opendesign-billing.md)
+
+## v1.9.60(2026-11-08)—— 本地模型费用折算与界面反馈修复
+
+- 新增可选“本地节省”卡片：按渠道 ID 前缀统计本地模型 Token，用选定的 DeepSeek 参考模型与固定价格档位折算今日、本周、本月和累计金额，展开查看各模型。默认关闭。
+- 修复峰谷进度条悬停出现两层相同提示；纯文字模式下仍可查看三种图形预览，选择样式即可恢复进度条。
+- 将额度横条放在 Agent 任务、目标和消息队列之后，紧邻输入框；预算、Go、Plan 与 Codex 统一标明“已用”或“剩余”。
+- 将会话费用入口和显示预览中的货币符号放回金额前，例如“本会话 ¥2.1382”。
+- 双语 README 保留四个常用徽章与鲸鱼宣传图，功能总览改为适合手机阅读的列表，保留实际界面截图。
+
+[更新说明](update-notes-1.9.60.md)
+
+## v1.9.59(2026-11-08)—— 峰谷倍率、额度状态、会话性能与文档更新
+
+- 基础价、峰价、谷价提供独立倍率和统一倍率输入，同时显示实际单价。
+- 已启用的 MiniMax 与其他 Coding Plan 在缺凭据、查询失败或无窗口时保留卡片，显示原因并支持点击或键盘重试。
+- 会话切换复用同一版本的用量与代理计费记录，修复并发读取的取消隔离及归档变化后的缓存失效。
+- 补充 Mistral 托管 GLM 5.3 Flash 和 DeepSeek V4.1 Flash 1017 的价格，修复渠道别名匹配，保留 Ollama 和既有日期模型的计价。
+- 更新 billion-context 0.1.213、dsh-codex-subscription 3.2.7 兼容基线与 CI 覆盖。
+- 补充 Billion Context 与 NodeJS 诊断的共存配置，保留计费和其他诊断组件，仅关闭 Host fetch 抓包。
+- 重整中英文 README 与专题文档，保留全部徽章、贡献者和 Star 记录，加入 23 张界面截图并修正旧说明。
+
+[更新说明](update-notes-1.9.59.md)
+
+## v1.9.58(2026-11-05)—— 会话费用入口消失修复
+
+- 修复恢复会话或重新加载插件时，用量先于设置到达导致费用组件报错、输入框下方金额入口消失的问题。
+- 设置尚未就绪时保留加载或错误提示，设置到达后正常显示已记录的金额；标题栏入口同步修复，保留手动隐藏设置。
+- 增加配置延迟、失败后恢复、账本先返回、固定汇率金额及切换会话的回归验证，并在 DSH 0.2.2-alpha.3 的错误边界中检查实际 React 渲染。
+- Keep the session-cost entry mounted when usage arrives before configuration; recover the recorded amount after loading without changing explicit visibility preferences.
+
+[更新说明](update-notes-1.9.58.md)
+
+## v1.9.57(2026-11-04)—— 桌面更新退出超时修复
+
+- 修复历史回填已经开始后仍阻止 Desktop Host 退出、导致客户端更新等待超时的问题。退出时取消扫描，等待读取结束和文件关闭，再保存账本。
+- 将取消信号传入 JSONL、zstd、SQLite 会话读取和搜索／Billion Context 历史；取消后不继续降级读取或扫描下一会话。
+- 被中断的历史导入和 fork 修复不写入完成标记，下次启动继续处理。
+- Cancel active startup history scans during shutdown, close readers before saving the ledger, and preserve interrupted imports for retry.
+
+[更新说明](update-notes-1.9.57.md)
+
+## v1.9.56(2026-11-04)—— 账本读取与写入合并
+
+- 修复费用查询提前触发账本保存的问题，让磁盘 revision 未变时的本地更新在原定两秒窗口内合并，减少重复快照、Worker 启动与磁盘写入。
+- 待写数据缺少计时器时安排保存，跨进程变更立即合并，显式提交与退出保存继续完成持久化。
+- Preserve the two-second ledger write window during fee reads, with bounded scheduling recovery and immediate reconciliation of sibling-process writes.
+
+感谢 [@XHPAN](https://github.com/XHPAN) 在 [#470](https://github.com/Han-1413141/dsh-cost-meter/issues/470) 提供定位、隔离复现、真实临时账本对照和修复建议。
+
+[更新说明](update-notes-1.9.56.md)
+
+## v1.9.55(2026-11-04)—— 会话费用入口与圆环居中
+
+- 合并输入区会话费用与明细入口，沿用官方 StatsPills 的间距、字号、悬停与展开样式，支持点击整行打开明细。感谢 [@yyc001](https://github.com/yyc001) 在 [#467](https://github.com/Han-1413141/dsh-cost-meter/issues/467) 提出需求并在 [#468](https://github.com/Han-1413141/dsh-cost-meter/pull/468) 提供实现。
+- 保留输入区／标题栏／关闭的位置设置和旧配置，修复自定义货币符号影响金额数字的问题，显示预览同步入口状态。
+- 修复套餐开口圆环的百分比文字偏移，覆盖明暗主题、四种布局和窄侧栏。感谢 [@Eancen](https://github.com/Eancen) 在 [#469](https://github.com/Han-1413141/dsh-cost-meter/issues/469) 提供环境、复现步骤与截图。
+- Unify the clickable session-cost pill with native statistics, preserve saved display positions and custom currency amounts, and center percentages in open-ring quota cards.
+
+[更新说明](update-notes-1.9.55.md)
+
+## v1.9.54(2026-11-03)—— Codex Subscription 3.2.4 兼容
+
+- 验证 dsh-codex-subscription 3.2.4 的实际发布包，更新兼容基线和两个宿主的持续集成矩阵，处理 github-actions[bot] 在 [#465](https://github.com/Han-1413141/dsh-cost-meter/issues/465) 提供的接口变化报告。
+- 补充权限错误经 RPC 保留公开说明、登录完成后清理账号额度缓存，以及失败冷却结束后重新获取额度的回归检查。
+- Validate Codex Subscription 3.2.4 access-error messages, login cache invalidation and fresh quota after failure cooldown against its published package.
+
+[更新说明](update-notes-1.9.54.md)
+
+## v1.9.53(2026-11-03)—— billion-context 0.1.212 兼容
+
+- 验证 billion-context 0.1.212 的实际发布包，更新兼容基线并加入持续集成，处理 github-actions[bot] 在 [#462](https://github.com/Han-1413141/dsh-cost-meter/issues/462) 报告的原生拦截函数变化。
+- 新增连续原生请求验证，覆盖预填充进度学习、Request 输入、请求体保留及费用关联确认。
+- Validate billion-context 0.1.212 native prefill-progress headers, cost acknowledgements and stock automatic integration against the published package.
+
+[更新说明](update-notes-1.9.53.md)
+
+## v1.9.52(2026-11-03)—— DSH 0.2.2-alpha.3 兼容
+
+- 适配 DSH 0.2.2-alpha.3：使用新 Cordis 服务提供记录发现已加载的隔离 Web 服务，修复原生搜索漏计；保留旧宿主及卸载重载支持。
+- 两个宿主 peer 显式接受 0.2.2 预发布版；next-host 与客户端加载器检查加入 alpha.3，并更新新版工具执行测试。
+- Adapt to the updated Cordis service-provision records and 0.2.2 prerelease dependency resolution; verify real host installation, billing, RPC and client loaders.
+
+[更新说明](update-notes-1.9.52.md)
+
+## v1.9.51(2026-11-03)—— 峰谷显示时区
+
+- 峰谷开始、切换时间与设置摘要默认读取当前设备系统时区；新增手动 IANA 时区选择，支持即时预览、持久化、夏令时、跨日及非整小时偏移，保持计费与历史日期规则。感谢 [@jt-at-home](https://github.com/jt-at-home) 在 [#460](https://github.com/Han-1413141/dsh-cost-meter/issues/460) 提供问题报告和本地时区配置建议。
+- Display peak times in the system timezone by default, with a saved manual override and daylight-saving-aware labels; provider billing calendars remain unchanged.
+
+[更新说明](update-notes-1.9.51.md)
+
+## v1.9.50(2026-11-02)—— billion-context 输入误计与历史账本纠正
+
+- 修复 billion-context 无模型调用时的输入估计值误计，统一检查缓存、实时导入与归档记录，保留真实大上下文及有效宿主用量。感谢 [@191xhq](https://github.com/191xhq) 在 [#458](https://github.com/Han-1413141/dsh-cost-meter/issues/458) 提供回放对照、异常统计、原因定位和过滤建议。
+- 启动时备份并纠正有入账凭据的历史误计记录，同步会话、日期、模型和套餐小时统计，沿用历史价格及汇率；重复启动和并发写入不会再次扣除。
+- Stop billing input-only context estimates without model-call evidence; repair receipted historical charges atomically with a backup and original pricing/FX.
+
+[更新说明](update-notes-1.9.50.md)
+
+## v1.9.49(2026-11-02)—— 套餐圆环、搜索计费与费用核对
+
+- 套餐侧栏新增可选的开口圆环，多个额度窗口并排显示，保留刷新、重置提示及纯文本模式。感谢 [@Eancen](https://github.com/Eancen) 在 [#455](https://github.com/Han-1413141/dsh-cost-meter/issues/455) 提供需求和参考图。
+- 修复网络插件后加载并替换 fetch 时的原生搜索漏记，避免嵌套观察重复计费；新增可预览、可去重的搜索请求费手动补记命令。感谢 [@loxxa-carry](https://github.com/loxxa-carry) 在 [#456](https://github.com/Han-1413141/dsh-cost-meter/issues/456) 提供运行环境、诊断计数和补记建议。
+- 概览新增计费核对，区分实际价表币种、显示币种和套餐 API 等值，提供官方价格同步入口；记录缓存、峰谷、去重、历史汇率和并发写入检查结果。
+- Add optional plan quota gauges, reconnect native-search observation after transport replacement, support explicit idempotent request-fee corrections, and explain active billing currency and subscription cost basis.
+
+[更新说明](update-notes-1.9.49.md) · [计费检查](billing-review-2026-11-02.md)
+
+## v1.9.48(2026-11-01)—— 模块注册兼容与 Codex 重置时间
+
+- 修复启用 dsh-loader 时的客户端重复注册及异步模块加载失败：为费用插件保留原生 `chunk` 与 `require.async`，继续使用按需加载和宿主热更新。感谢 [@3-yanyupingsheng](https://github.com/3-yanyupingsheng) 在 [#452](https://github.com/Han-1413141/dsh-cost-meter/issues/452) 提供桌面环境、错误日志、重启复现及跨版本对照。
+- Codex 输入栏额度的悬停提示按窗口显示剩余百分比与完整重置时间，并显示更新时间；有 5 小时窗口时与 7 天窗口一起展示，缺少时间时保留额度、不生成日期。
+- 验证 billion-context 0.1.210、0.1.211 实际发布包的计费与原版 CLI 自动接入，更新兼容基线和 CI，处理 github-actions[bot] 的 [#451](https://github.com/Han-1413141/dsh-cost-meter/issues/451)。
+- Preserve native chunk registration under dsh-loader, display Codex reset dates in the input-bar tooltip, and verify published billion-context 0.1.210–0.1.211 packages.
+
+[更新说明](update-notes-1.9.48.md)
+
+## v1.9.47(2026-11-01)—— 余额公式与渠道峰谷设置
+
+- 自定义余额支持算式、嵌套运算及订阅数组求和，区分剩余额度与已用量。[配置示例](custom-balance-sources.md#复杂计算与订阅余额)。
+- 按渠道与模型配置峰谷时段、日历及节假日，自定义模型可分别填写峰价和谷价；设置进入价格历史并在官方同步时保留。感谢 [@wexther](https://github.com/wexther) 在 [#445](https://github.com/Han-1413141/dsh-cost-meter/issues/445) 提出需求与配置结构建议。
+- 合并 [@wegret](https://github.com/wegret) 的 [#447](https://github.com/Han-1413141/dsh-cost-meter/pull/447)，修复其在 [#446](https://github.com/Han-1413141/dsh-cost-meter/issues/446) 报告的 Go 侧栏额度明细方向问题。
+- 合并 Dependabot 的 [#448](https://github.com/Han-1413141/dsh-cost-meter/pull/448)、[#449](https://github.com/Han-1413141/dsh-cost-meter/pull/449)，同步 rc.4 开发依赖与安装策略；验证 Codex 订阅 3.2.2、3.2.3 发布包，处理 github-actions[bot] 的 [#444](https://github.com/Han-1413141/dsh-cost-meter/issues/444)。
+- Add custom balance arithmetic and subscription sums, provider/model peak schedules and separate rates; preserve historical pricing and synchronization overrides, correct Go detail direction, and verify current Codex subscription packages.
+
+[更新说明](update-notes-1.9.47.md) · [渠道峰谷配置](provider-peak-schedules.md)
+
+## v1.9.46(2026-10-29)—— 峰谷箭头与上游兼容更新
+
+- 验证 billion-context 0.1.209 与 dsh-codex-subscription 3.2.1 的实际发布包，更新兼容基线与持续集成；处理 github-actions[bot] 的 [#441](https://github.com/Han-1413141/dsh-cost-meter/issues/441)、[#442](https://github.com/Han-1413141/dsh-cost-meter/issues/442)。
+
+- 分段样式的箭头在峰谷切换前后保持在组件内部，修复临近切换时的横向溢出。
+- 包含上一版的 OpenDesign Cookie、余额快速隐藏、费用页修复与内存优化。
+
+[更新说明](update-notes-1.9.46.md)
+
+## v1.9.45(2026-10-29)—— 额度查询、余额隐藏与内存优化
+
+- OpenDesign 支持网页 Cookie 与当前工作区查询，新增具体配置步骤。
+- 显示设置提供可选的余额隐藏操作，金额、进度条与悬停内容同步隐藏。
+- 同一会话只缓存最新记录版本，限制统计快照总量，并释放闲置的前后端缓存。
+- 针对 [#440](https://github.com/Han-1413141/dsh-cost-meter/issues/440) 将命令弹窗费用内容与 dsh-context 原卡片分开，避免异步加载改变上游测量高度；感谢 @LUgABeEEE 的对照测试与探针。
+- 费用明细加载超时可重试；修复 [#438](https://github.com/Han-1413141/dsh-cost-meter/issues/438) 的按钮错位，感谢 @fouriyeo 的报告与定位。
+- 合并 @windybirth 的 [#437](https://github.com/Han-1413141/dsh-cost-meter/pull/437)，修复 Anthropic 主窗口的误报红色并补充重置时间与预测。
+
+[更新说明](update-notes-1.9.45.md) · [OpenDesign 配置](opendesign-billing.md)
+
+## v1.9.44(2026-10-28)—— 峰谷游标与模型、套餐目录
+
+- 修复 [#434](https://github.com/Han-1413141/dsh-cost-meter/issues/434) 的固定游标；报告者为 [@shutongX](https://github.com/shutongX)。
+- 补入 Kimi K3.1 Pro / Highspeed、MiniMax M3.1 Flash 等模型及 OpenCode Go / Zen、OpenRouter 的新条目。
+- 更新 Kimi 新套餐与 MiniMax M Plan 说明，并兼容 Kimi 新旧额度响应。
+
+[更新说明](update-notes-1.9.44.md) · [目录与来源](catalog-2026-10-28.md)
+
 ## v1.9.43(2026-10-28)—— 空闲扫描修复、统一显示引导与订阅兼容验证
 
 - billion-context 使用运行中实例与异步目标元数据识别，空闲不再调用全量插件清单；账本格式和补记机制不变。

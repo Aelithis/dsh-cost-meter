@@ -10,6 +10,9 @@ import './ledger-lock-recovery.mjs'
 // This service fixture owns startup timers and must not overlap slow static imports.
 import './context-costs.mjs'
 import './clinepass-quota.mjs'
+import './anthropic-quota-display.mjs'
+import './opendesign-cookie.mjs'
+import './statistics-timeout.mjs'
 import './pi-ai-codex-quota.mjs'
 import './chatgpt-sub-quota.mjs'
 import './pi-ai-codex-client.mjs'
@@ -112,10 +115,11 @@ function trackFixtureEffect(factory) {
   }
   return dispose
 }
-function rmSync(path, options) {
-  const target = resolve(String(path)).toLowerCase()
+async function removeFixture(path, options) {
+  const target = resolve(String(path)).toLowerCase(), suite = resolve(suiteRoot).toLowerCase()
+  assert.ok(target === suite || target.replaceAll('\\', '/').startsWith(suite.replaceAll('\\', '/') + '/'), 'cleanup stays inside this test suite')
   for (const [root, effects] of fixtureEffects) if (root.toLowerCase() === target || root.toLowerCase().replaceAll('\\', '/').startsWith(target.replaceAll('\\', '/') + '/')) {
-    for (const dispose of effects.reverse()) dispose()
+    for (const dispose of effects.reverse()) await dispose()
     fixtureEffects.delete(root)
   }
   removeFixtureFiles(path, { ...options, maxRetries: 5, retryDelay: 100 })
@@ -144,7 +148,7 @@ const suiteRoot = mkdtempSync(join(osTmpdir(), 'cm-verify-'))
 const tmpdir = () => suiteRoot
 process.on('exit', () => {
   assert.equal(dirname(resolve(suiteRoot)), resolve(osTmpdir()))
-  rmSync(suiteRoot, { recursive: true, force: true })
+  removeFixtureFiles(suiteRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 // ── 客户端源码拼接视图(v1.7.12 起)────────────────────────────────────────
@@ -156,7 +160,7 @@ function readClientSource() {
   const dir = new URL('../src/client/', import.meta.url)
   const parts = readdirSync(dir).filter(name => name.endsWith('.js')).sort()
   assert.ok(parts.length > 0, 'src/client/ 源码片段缺失')
-  return parts.map(name => readFileSync(new URL(name, dir), 'utf8').replace(/\r\n/g, '\n')).join('') + readFileSync(new URL('../src/plan-settings/index.js', import.meta.url), 'utf8')
+  return parts.map(name => readFileSync(new URL(name, dir), 'utf8').replace(/\r\n/g, '\n')).join('') + readFileSync(new URL('../src/plan-settings/index.js', import.meta.url), 'utf8') + readFileSync(new URL('../src/pricing/peak-panel.js', import.meta.url), 'utf8')
 }
 const displaySource = readFileSync(new URL('../src/display/index.js', import.meta.url), 'utf8')
 
@@ -352,7 +356,7 @@ console.log('[ok] usdFromCost(CNY 折算/USD 原值/非法兜底/往返抵消)�
 // 成本按人民币计、除展示汇率折算为美元入账;第三方 flat 价恒为美元不折算。
 {
   process.env.DSH_HOME = join(tmpdir(), 'dsh-cost-meter-test-home-cny')
-  rmSync(process.env.DSH_HOME, { recursive: true, force: true })
+  await removeFixture(process.env.DSH_HOME, { recursive: true, force: true })
   const zhLedger = Ledger.open()
   const cnyPatch = applyConfigPatch(zhLedger.config, {
     pricingCurrency: 'CNY',
@@ -390,7 +394,7 @@ console.log('[ok] usdFromCost(CNY 折算/USD 原值/非法兜底/往返抵消)�
   assert.ok(indexSource.includes("parsePricingHtml(await fetchPricingHtml(locale, wanted === 'CNY' ? 'USD' : 'CNY'))"), '目标币种页失败回退另一语言页')
   const syncSource = readFileSync(new URL('../lib/official-price-sync.js', import.meta.url), 'utf8')
   assert.ok(indexSource.includes('prices: officialPriceSyncTable(ledger.config.prices, parsed, locale)') && syncSource.includes("const currency = parsed.currency === 'CNY' ? 'CNY' : 'USD'"), '同步通过原子币种保护构建价表')
-  assert.ok(syncSource.includes('default: { ...fallback, ...priceMultiplierSettings(current?.default) }'), 'default 随页面替换，仅保留用户倍率，不残留旧币种单价')
+  assert.ok(syncSource.includes('default: { ...fallback, ...priceMultiplierSettings(current?.default), ...peakScheduleSettings(current?.default) }'), 'default 随页面替换，保留用户倍率与时段，不残留旧币种单价')
   assert.ok(indexSource.includes('pricesSyncedFallback'), '回退提示文案存在(zh/en)')
   const clientSource = readClientSource()
   assert.ok(clientSource.includes("setField('pricingCurrency'"), '设置页含官方价格币种下拉')
@@ -591,7 +595,7 @@ console.log('[ok] 周末全谷价新规(区间/窗口/档位/相位)通过')
   assert.deepEqual(cfg.peakHolidays, DEFAULT_PEAK_HOLIDAYS)
   assert.deepEqual(applyConfigPatch(cfg, { peakHolidays: ['2026-11-02'] }).config.peakHolidays, ['2026-11-02'])
   assert.ok(applyConfigPatch(cfg, { peakHolidays: ['2026-02-30'] }).errors.length > 0, '无效日期被拒绝')
-  const root = mkdtempSync(join(osTmpdir(), 'cm-holiday-history-'))
+  const root = mkdtempSync(join(tmpdir(), 'cm-holiday-history-'))
   const id = 'holiday-session'
   const logDir = join(root, '--proj--', id)
   mkdirSync(logDir, { recursive: true })
@@ -614,7 +618,7 @@ console.log('[ok] 周末全谷价新规(区间/窗口/档位/相位)通过')
   assert.ok(Math.abs(ledger.days[date].sessions[0].cost - ledger.days[date].cost) < 1e-9, '会话与每日金额一致')
   await recomputeLedgerPricingBasis(ledger, root, (_, keyDate) => keyDate === date, new Set([id]))
   assert.ok(Math.abs(ledger.days[date].cost * 2 - oldCost) < 1e-9, '重复重算不再次折扣')
-  rmSync(root, { recursive: true, force: true })
+  await removeFixture(root, { recursive: true, force: true })
   console.log('[ok] 法定假日峰谷价与配置通过')
 }
 
@@ -728,7 +732,7 @@ console.log('[ok] provider 隔离/未知模型/reasoning/旧模型清理断言�
 // 3) 账本:临时 DSH_HOME;入账分界前调用应记 legacyBase 成本。
 // 每次运行前清空临时账本,避免跨运行累积污染断言。
 process.env.DSH_HOME = join(tmpdir(), 'dsh-cost-meter-test-home')
-rmSync(process.env.DSH_HOME, { recursive: true, force: true })
+await removeFixture(process.env.DSH_HOME, { recursive: true, force: true })
 const ledger = Ledger.open()
 ledger.account({ input: 10000, output: 5000, cacheRead: 90000, cacheWrite: 10000 }, 'deepseek-v4-pro', 'session-legacy', preMs)
 ledger.account({ input: 100, output: 50, cacheRead: 0, cacheWrite: 0 }, 'deepseek-v4-pro', 'session-a', Date.now())
@@ -746,13 +750,20 @@ assert.equal(legacySession.input, 10000, 'legacy 会话 token 入账正确')
 assert.ok(legacyDay.byProviderModel['deepseek:deepseek-v4-pro'], '账本保存 provider/model 明细')
 console.log('[ok] 账本入账(含分界前 legacyBase)通过')
 console.log('[ok] 今日记录:', JSON.stringify(reloaded.today(), null, 2))
-console.log('[ok] default 回退计费生效(unknown-model-x 用 default 价)')
+assert.equal(reloaded.today().byProviderModel['deepseek:unknown-model-x'].cost, 0, '未知模型保留用量，不套用默认价')
+console.log('[ok] 未知模型保留用量，费用等待明确价格')
 
 // 4) 配置补丁校验。
-const patchOk = applyConfigPatch(reloaded.config, { position: 'header', currency: 'USD', symbol: '$', exchangeRate: 1, decimals: 6 })
-console.log('[ok] 配置补丁:', patchOk.errors.length === 0 ? '通过' : patchOk.errors.join(';'), patchOk.config.position, patchOk.config.symbol)
+const patchOk = applyConfigPatch(reloaded.config, { currency: 'USD', symbol: '$', exchangeRate: 1, decimals: 6 })
+console.log('[ok] 配置补丁:', patchOk.errors.length === 0 ? '通过' : patchOk.errors.join(';'), patchOk.config.symbol)
 const patchBad = applyConfigPatch(reloaded.config, { position: 'nowhere' })
-console.log('[ok] 非法补丁被拒:', patchBad.errors.join(';'))
+assert.ok(patchBad.errors.length)
+for (const position of ['dock', 'header', 'off']) {
+  const result = applyConfigPatch(reloaded.config, { position })
+  assert.deepEqual(result.errors, [])
+  assert.equal(sanitizeConfig(result.config).position, position)
+}
+console.log('[ok] 会话费用位置配置兼容与校验通过')
 const patchBad2 = applyConfigPatch(reloaded.config, { unknownKey: 1 })
 console.log('[ok] 未知键被拒:', patchBad2.errors.join(';'))
 
@@ -793,7 +804,7 @@ console.log('[ok] peakNotice 配置与价格模型删除校验通过')
 // 4.2) 旧账本兼容回归:历史版本曾写入 reasoning: null 等非法数值,
 // 必须清洗到能通过 Typert strict 状态 codec,否则 getState 整体被拒(账本不可用、额度刷新连带失败)。
 const legacyHome = join(tmpdir(), 'dsh-cost-meter-test-legacy-home')
-rmSync(legacyHome, { recursive: true, force: true })
+await removeFixture(legacyHome, { recursive: true, force: true })
 process.env.DSH_HOME = legacyHome
 const legacyPath = join(legacyHome, 'storages', 'cost-meter', 'ledger.json')
 mkdirSync(join(legacyHome, 'storages', 'cost-meter'), { recursive: true })
@@ -862,7 +873,7 @@ console.log('[ok] 旧账本 null/缺失字段清洗与 strict codec 回归通过
 // 默认 'settings'(非用户选择);迁移为 'both' 保持「启用即上侧边栏」的旧版行为。账本根 migrations
 // 标记保证只跑一次——迁移后用户显式改回 'settings' 不会被再次翻转。
 const migHome = join(tmpdir(), 'dsh-cost-meter-test-mig-home')
-rmSync(migHome, { recursive: true, force: true })
+await removeFixture(migHome, { recursive: true, force: true })
 process.env.DSH_HOME = migHome
 const migPath = join(migHome, 'storages', 'cost-meter', 'ledger.json')
 mkdirSync(join(migHome, 'storages', 'cost-meter'), { recursive: true })
@@ -1378,7 +1389,7 @@ assert.deepEqual(CODING_PLAN_PROVIDERS.scnet.credentialEnvs, [], 'scnet 不需�
 // 双端声明与接线(conversation.input.dock 横条 + 常驻插槽引导卡)。
 {
   const base = sanitizeConfig({})
-  assert.deepEqual(base.quotaStrip, { enabled: false, budget: true, go: true, plans: true, promptSeen: false }, 'quotaStrip 默认值(关 + 全内容开 + 未引导)')
+  assert.deepEqual(base.quotaStrip, { enabled: false, budget: true, go: true, plans: true, planAmounts: true, promptSeen: false }, 'quotaStrip 默认值(关 + 全内容开 + 未引导)')
   const patched = applyConfigPatch(base, { quotaStrip: { enabled: true, promptSeen: true } })
   assert.equal(patched.errors.length, 0, '部分字段补丁通过(mergeDeep 补全其余字段)')
   assert.equal(patched.config.quotaStrip.enabled, true, '横条可开启')
@@ -1625,7 +1636,7 @@ assert.equal(gtsInvocation.result.mode, 'strict', 'getTopSessions 返回 strict 
   assert.equal(gdsCopy.sessions[0].id, 'session-gds', '会话 id 保真')
   const gdsLight = gdsLedger.history(60)
   assert.equal(gdsLight[0].sessions.length, 0, 'history() 轻量副本不含会话')
-  rmSync(gdsRoot, { recursive: true, force: true })
+  await removeFixture(gdsRoot, { recursive: true, force: true })
 }
 // getTopSessions 语义:跨天汇总、排序模式、title/at 透传(与服务端同构实现验证)。
 {
@@ -1774,8 +1785,8 @@ const dsCandidates = Object.keys(DEFAULT_PRICE_TABLE.models)
 // 6.1 匹配算法各分支。
 assert.equal(matchModelId('deepseek-v4-flash', dsCandidates), 'deepseek-v4-flash', '精确匹配')
 assert.equal(matchModelId('deepseek-v4-flash-2026-08-01', dsCandidates), 'deepseek-v4-flash', '去日期后缀')
-assert.equal(matchModelId('deepseek-v4-pro-v2', dsCandidates), 'deepseek-v4-pro', '去版本后缀')
-assert.equal(matchModelId('deepseek-v4-flash-128k', dsCandidates), 'deepseek-v4-flash', '前缀匹配')
+assert.equal(matchModelId('deepseek-v4-pro-v2', dsCandidates), null, '不同版本不套用基础模型价')
+assert.equal(matchModelId('deepseek-v4-flash-128k', dsCandidates), null, '独立上下文规格须有明确价格')
 assert.equal(matchModelId('gpt-5-mini-2026-01-01', ['gpt-5-2025-08-07', 'gpt-4.1-2025-04-14']), null, '不同变体不互配')
 assert.equal(matchModelId('totally-unknown-model', dsCandidates), null, '阈值防误配')
 assert.equal(billingClassOf('openai-codex', 'gpt-6-luna', { models: { 'openai-codex:gpt-6-luna': 'plan' } }, new Set()), 'plan', '未知 provider 的模型级 Plan 覆盖优先生效')
@@ -1785,10 +1796,10 @@ assert.equal(matchModelId('claude-opus-4-9', ['claude-opus-4-8']), null, '同家
 assert.equal(matchModelId('glm-5', ['glm-5.3', 'glm-5.2']), null, '不猜测版本号')
 // 数字分叉守卫覆盖宽泛包含/前缀阶段(此前守卫只在家族 token 阶段,'glm-53'
 // 包含 'glm5' 即命中旧版低价):候选是请求前缀且余量全为数字 → 版本分叉拒绝;
-// '-128k' 等容量后缀(余量非纯数字)不受影响。
+// 容量后缀同样保留身份，不通过删除后缀推断价格。
 assert.equal(matchModelId('glm-5.3', ['glm-5']), null, 'containment 阶段数字分叉拒绝(glm-5.3 不落 glm-5 旧价)')
 assert.equal(matchModelId('gpt-5.9', ['gpt-5', 'gpt-5-nano']), null, 'prefix 阶段数字分叉拒绝(gpt-5.9 的 .9)')
-assert.equal(matchModelId('deepseek-v4-flash-128k', dsCandidates), 'deepseek-v4-flash', '容量后缀 -128k 前缀匹配保留')
+assert.equal(matchModelId('deepseek-v4-flash-128k', dsCandidates), null, '容量后缀 -128k 不套用基础模型价')
 assert.equal(matchModelId('claude-opus-4-20250514', ['claude-opus-4']), 'claude-opus-4', '日期快照经去饰等价仍命中')
 assert.equal(matchModelId('', dsCandidates), null, '空 id 安全')
 // 6.2 providerPriceEntryFor:auto/exact 与手动覆盖。
@@ -1797,7 +1808,7 @@ const autoHit = providerPriceEntryFor('deepseek', 'deepseek-v4-flash-2026-08-01'
 assert.equal(autoHit.entry.cacheMiss, flash.cacheMiss, 'auto 模式命中 flash 价')
 assert.equal(autoHit.billingMode, 'deepseek-peak', '匹配命中仍走峰谷计费')
 const exactMiss = providerPriceEntryFor('deepseek', 'deepseek-v4-flash-2026-08-01', dsPrices, { mode: 'exact' })
-assert.equal(exactMiss.entry.cacheMiss, DEFAULT_PRICE_TABLE.default.cacheMiss, 'exact 模式回退默认价')
+assert.equal(exactMiss.priced, false, 'exact 未命中时保持未定价')
 const overrideHit = providerPriceEntryFor('openai', 'gpt-x', providerPrices, { overrides: { 'openai:gpt-x': 'same-model' } })
 assert.equal(overrideHit.priced, true, '手动覆盖命中同 provider 模型')
 assert.equal(overrideHit.entry.cacheMiss, 2, '手动覆盖使用目标价')
@@ -1958,14 +1969,14 @@ console.log('[ok] 宽泛匹配与跨厂商兑底(路由 provider 费用为零修
   // restore 路径抛出与 issue 报错完全一致的 TypeError。
   const brokenDef = { ...def, stateSchema: undefined }
   assert.throws(() => brokenDef.stateSchema.parse(projRow.val), /Cannot read properties of undefined \(reading 'parse'\)/, 'issue #43 根因复现:缺 stateSchema 时 restore 抛同款 TypeError')
-  rmSync(projRoot, { recursive: true, force: true })
+  await removeFixture(projRoot, { recursive: true, force: true })
   console.log('[ok] 投影 schema 行为级验证(stateSchema/旧 schema/wire.viewSchema 三调用点 + 崩溃点对照)通过')
 }
 
 // 7) 兼容性回归:配置清洗 + state codec 漂移防护(「账本不可用」根治)。
 // 7.1 sanitizeConfig:历史/手改账本的非法配置值回落收敛。
 const dirty = sanitizeConfig({
-  locale: 'fr', position: 'nowhere', decimals: 'many', exchangeRate: -1,
+  locale: 'fr', decimals: 'many', exchangeRate: -1, position: 'nowhere',
   peakStyle: 'fancy', priceMatch: 'guess', peakWindows: [{ start: 'x', end: 1 }],
   priceOverrides: { 'deepseek:a': 1, ok: 'deepseek-v4-flash' },
   priceTableDisplay: { 'deepseek:x': 'x', 'anthropic:y': true },
@@ -1974,7 +1985,7 @@ const dirty = sanitizeConfig({
   corner: { enabled: 'x' },
 })
 assert.equal(dirty.locale, 'auto', '非法 locale 回落')
-assert.equal(dirty.position, 'dock', '非法 position 回落')
+assert.equal(dirty.position, 'dock', '非法会话费用位置回落默认')
 assert.equal(typeof dirty.decimals, 'number', '非法 decimals 回落为数字')
 assert.equal(dirty.exchangeRate, 7.2, '非法汇率回落默认')
 assert.equal(dirty.peakStyle, 'compact', '非法 peakStyle 回落')
@@ -2195,7 +2206,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   assert.equal(filledT.titles, 1, '纯标题通道补齐标题')
   assert.equal(dayT.sessions[0].title, 'Test Session Alpha', '已有拆分的会话也补标题')
   assert.equal(dayT.sessions[0].at, legacyAt, '纯标题通道同时补齐时间戳')
-  rmSync(rootT, { recursive: true, force: true })
+  await removeFixture(rootT, { recursive: true, force: true })
   // 8a-ter) 大日志流式解析与定向扫描(issue #50,PR #51):多帧 zstd 逐帧解压、
   // 行缓冲跨帧拼接,解析结果与整段明文一致;纯标题补齐只读缺失会话的日志。
   const multiLines = [JSON.stringify({ type: 'session', version: 0, id: 'session-multi', createdAt: legacyAt, delegationDepth: 0 })]
@@ -2220,7 +2231,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   assert.equal(multiRecords[multiRecords.length - 1].data.step, multiLines.length - 1, '跨帧行缓冲拼接末尾事件')
   writeFileSync(join(rootM, '--proj--', 'session-multi', 'session.jsonl'), wholeText)
   assert.deepEqual(multiRecords, await readSessionRecordsAsync(join(rootM, '--proj--', 'session-multi', 'session.jsonl')), '多帧流式解析与整段明文解析结果逐位一致')
-  rmSync(rootM, { recursive: true, force: true })
+  await removeFixture(rootM, { recursive: true, force: true })
   // 定向枚举:listSessionLogs 按会话 id 过滤目录,缺省参数行为不变。
   const rootL = join(tmpdir(), `cm-backfill-onlyids-${Date.now()}`)
   mkdirSync(join(rootL, '--proj--', 'session-a'), { recursive: true })
@@ -2245,7 +2256,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   assert.equal(dayL.sessions[0].title, 'Test Session Alpha', '定向扫描补齐的标题内容正确')
   const againL = await backfillLegacyLedger(ledgerL, rootL)
   assert.equal(againL.scanned, 0, '标题补齐后启动零扫描')
-  rmSync(rootL, { recursive: true, force: true })
+  await removeFixture(rootL, { recursive: true, force: true })
   // 8b) 完整覆盖重算:修正旧版本误计费导致的历史虚高(issue #18)。
   const root2 = join(tmpdir(), `cm-backfill-recost-${Date.now()}`)
   mkdirSync(join(root2, '--proj--', 'session-a'), { recursive: true })
@@ -2260,8 +2271,8 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   assert.ok(Math.abs(day2.cost - (expectFlash + expectPro)) < 1e-12, '当日总额按回放历史价重算(修正虚高)')
   assert.ok(Math.abs(day2.sessions[0].cost - (expectFlash + expectPro)) < 1e-12, '会话金额同步重算')
   assert.equal(day2.byProviderModel['deepseek:legacy'], undefined, '完整覆盖不产生残差桶')
-  rmSync(root2, { recursive: true, force: true })
-  rmSync(root, { recursive: true, force: true })
+  await removeFixture(root2, { recursive: true, force: true })
+  await removeFixture(root, { recursive: true, force: true })
   console.log('[ok] 历史账本按模型回填(会话日志回放/legacyBase 历史价/legacy 残差/幂等/会话标题)通过')
 }
 
@@ -2333,7 +2344,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   assert.equal(again.days, 0, '幂等:无新增日期')
   assert.equal(again.sessions, 0, '幂等:无新增会话')
   assert.equal(nearDay.sessions.length, 2, '幂等:会话数不变')
-  rmSync(root, { recursive: true, force: true })
+  await removeFixture(root, { recursive: true, force: true })
   console.log('[ok] 导入安装前历史(缺失日期重建/未知会话追加/已知会话不动/幂等/升序)通过')
 }
 
@@ -2457,7 +2468,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   assert.ok(indexSource.includes('seedEndSeq: z.number(),') && indexSource.includes('shadow: z.object({'), 'stateSchema 覆盖种子边界与影子累计字段(issue #55)')
   assert.ok(indexSource.includes('seedLength: z.number().optional()') && indexSource.includes('seedDeducted: z.boolean().optional()'), 'stateSchema 覆盖 seedLength/seedDeducted 延迟扣除字段(issue #61)')
   assert.ok(indexSource.includes('repairForkSeed(ledger, sessionsRoot)') && indexSource.includes("'fork-seed-dedup-v1'"), '启动导入接入一次性清洗(migrations 标记防重跑)')
-  rmSync(root, { recursive: true, force: true })
+  await removeFixture(root, { recursive: true, force: true })
   console.log('[ok] fork 会话种子去重(回放双段聚合/账本清洗扣除/父会话与普通会话不动/投影接线)通过')
 }
 
@@ -2528,7 +2539,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
     ev('assistant/message', 2, { time: 2100, data: { turn: 2, step: 1, usage: { inputTokens: 20, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 } } }),
   ]) legacy = def.apply(legacy, e)
   assert.equal(legacy.totals.input, 20, '旧宿主路径:time < createdAt 的种子不计,time ≥ createdAt 计入')
-  rmSync(projRoot, { recursive: true, force: true })
+  await removeFixture(projRoot, { recursive: true, force: true })
   console.log('[ok] 投影 fork 种子过滤(end-seed 边界/影子扣回/live 与 refold 双路径/非 fork 不变/键复用防负数/旧宿主兼容)通过')
 }
 
@@ -2571,7 +2582,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   st2 = def2.apply(st2, extraEndSeed)
   assert.equal(st2.totals.input, before, 'own 段后的 end-seed 不改变已扣除状态')
   assert.equal(st2.seedEndSeq, 4, 'own 后 end-seed 不更新边界')
-  rmSync(projRoot2, { recursive: true, force: true })
+  await removeFixture(projRoot2, { recursive: true, force: true })
   console.log('[ok] 投影多 end-seed 延迟扣除(issue #61)通过')
 }
 
@@ -2610,7 +2621,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   for (const e of logForkLen) stForkLen = def3.apply(stForkLen, e)
   // length=2 作为种子边界,seq 1 的种子应被扣回,仅 seq2 的 own 保留
   assert.equal(stForkLen.totals.input, 200, 'fork 会话 length=2 回退为种子边界,种子扣回仅 own 计入')
-  rmSync(projRoot3, { recursive: true, force: true })
+  await removeFixture(projRoot3, { recursive: true, force: true })
   console.log('[ok] 非 fork 会话 length 不误作 seedLength(issue #63)通过')
 }
 
@@ -2633,12 +2644,12 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   assert.equal(providerPriceEntryFor('foo', 'no-such-model', fullPrices, { mode: 'auto', overrides: { 'foo:no-such-model': 'no-such-model' } }).priced, false, '未知裸名保持未定价(不误套默认价)')
   const clientSource = readClientSource() + readFileSync(new URL('../src/pricing/index.js', import.meta.url), 'utf8')
   assert.ok(clientSource.includes("value: 'deepseek:' + id"), '设置页下拉框 DeepSeek 目标存带前缀的值(issue #56 根因)')
-  assert.ok(clientSource.includes("if (provider !== 'deepseek' && !provider.includes('deepseek')") && clientSource.includes("matchModelIdLocal(override, Object.keys(dsModels), override, prices?.snapshotTags !== false, prices?.shortSnapshotTags !== false)"), '客户端 resolveClientPrice 同口径裸名兜底(未命中列表/徽章估算与计费一致)')
+  assert.ok(clientSource.includes("if (!['deepseek', 'deepseek-official'].includes(provider)") && clientSource.includes("matchModelIdLocal(override, Object.keys(dsModels), override, prices?.snapshotTags !== false, prices?.shortSnapshotTags !== false)"), '客户端 resolveClientPrice 同口径裸名兜底(未命中列表/徽章估算与计费一致)')
   // 客户端计费口径接线:parseConfig 白名单保留 prices.currency(CNY 价目下
   // 回退计价必须除汇率,否则展示金额放大汇率倍);跨厂商兑底 billingMode 与
   // 服务端 bestMode 对齐;数字分叉守卫双端同步。
   assert.ok(clientSource.includes("currency: typeof v.prices?.currency === 'string'"), '客户端 parseConfig 保留 prices.currency')
-  assert.ok(clientSource.includes("bestMode = priceBillingMode(modelsCat[h])"), '客户端跨厂商兑底 billingMode 与服务端同口径')
+  assert.ok(clientSource.includes("bestMode = priceBillingMode(entry)"), '客户端跨厂商兑底 billingMode 与服务端同口径')
   assert.ok(clientSource.includes('const stripped = stripIdDecor(target, snapshotTags, shortSnapshotTags)') && clientSource.includes('hits.length === 1 ? hits[0] : null'), '客户端安全后缀匹配与 pricing.js 同步')
   console.log('[ok] 手动价格映射裸 DeepSeek 名兜底(宿主+客户端双端/语义保留/下拉框根因修复)通过')
 }
@@ -3048,7 +3059,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   assert.ok(ledgerA167.migrations.includes('peak-effective-at-clamp-v1'), '迁移标记写入')
   await runStartupImports(ledgerA167, join(rootA167, 'sessions'))
   assert.equal(ledgerA167.config.peakEffectiveAt, LEGACY_BASE_BOUNDARY, '二次启动幂等(不再重复钳制)')
-  rmSync(rootA167, { recursive: true, force: true })
+  await removeFixture(rootA167, { recursive: true, force: true })
   if (prevHome167 === undefined) delete process.env.DSH_HOME
   else process.env.DSH_HOME = prevHome167
 
@@ -3106,7 +3117,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   const statsB2 = await recomputeLedgerPricingBasis(ledgerB, rootB167)
   assert.equal(statsB2.recostedSessions, 1, '二次重算仍完整替换(幂等)')
   assert.ok(Math.abs(rowB.cost - expectCnyPeakB) < 1e-12, '幂等:金额不因二次重算漂移')
-  rmSync(rootB167, { recursive: true, force: true })
+  await removeFixture(rootB167, { recursive: true, force: true })
   console.log('[ok] v1.6.7 峰谷生效时刻锚点 + 币种切换换基准(源哨兵/半价回归/clamp 幂等/CNY 端到端/跳过分支/日聚合)通过')
 }
 
@@ -3176,7 +3187,8 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   r = reconcileBalanceDelta(cnyBase, { ...bal(91.66), currency: 'CNY' }, 0.74, day, t1, { exchangeRate: 7.2 })
   assert.equal(r.event.kind, 'ok', '折算后与账本一致判 ok(此前跨币种直比恒 drift)')
   const indexSrcRecon = readFileSync(join(import.meta.dirname, '..', 'lib', 'index.js'), 'utf8')
-  assert.ok(indexSrcRecon.includes('exchangeRate: ledger.config.exchangeRate'), '对账调用传入汇率做折算')
+  assert.ok(indexSrcRecon.includes('fxRatesOf(ledger.config).CNY'), '对账用人民币参考汇率折算,与展示币种解耦')
+  assert.ok(indexSrcRecon.includes('{ exchangeRate })'), '对账调用传入汇率做折算')
   assert.ok(indexSrcRecon.includes('spentCurrency'), '提示按余额真实币种取符号')
   assert.equal((indexSrcRecon.match(/reconcileGrantedRelease: '/g) ?? []).length, 2, '赠送余额到期/回收提示 zh/en 双份(issue #302)')
   assert.ok(indexSrcRecon.includes('赠送余额到期/回收而非消费'), 'zh 提示说明差额不是消费')
@@ -3423,7 +3435,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   assert.equal(assertExactArguments({}, gtsDescriptor), false, '缺 limit 仍被拒(limit 未声明可缺省)')
   assert.equal(assertExactArguments({ limit: 100, bogus: 1 }, gtsDescriptor), false, '多余字段仍被拒')
 
-  rmSync(e2eRoot, { recursive: true, force: true })
+  await removeFixture(e2eRoot, { recursive: true, force: true })
   if (prevHome === undefined) delete process.env.DSH_HOME
   else process.env.DSH_HOME = prevHome
   console.log('[ok] apply() 真实路径 getTopSessions(单参数默认/排序语义/网关 JSON 安全与参数校验)通过')
@@ -3496,7 +3508,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
     assertJsonSafe(parsedState, new Set())
   }
   globalThis.fetch = prevFetch
-  rmSync(balRoot, { recursive: true, force: true })
+  await removeFixture(balRoot, { recursive: true, force: true })
   if (prevHome === undefined) delete process.env.DSH_HOME
   else process.env.DSH_HOME = prevHome
   console.log('[ok] apply() 真实路径 queryBalance/refreshBalance(多币种五场景/网关 JSON 安全)通过')
@@ -3573,7 +3585,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
       assert.equal(res.state.goQuota.monthly.percent, 7.25, 'retry:monthly 用量百分比')
     }
     assert.equal(sawBrowserUa, true, tag + ':浏览器 UA 头保留(Cloudflare error 1010 防护)')
-    rmSync(home, { recursive: true, force: true })
+    await removeFixture(home, { recursive: true, force: true })
   }
   globalThis.fetch = prevFetch
   if (prevHome === undefined) delete process.env.DSH_HOME
@@ -3651,7 +3663,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   assertJsonSafeScnet(stateCodec.schema.parse(state), new Set())
   // 配置链:scnet 专用字段经 sanitize 后保留(编码往返不丢)。
   assert.equal(state.config.codingPlans.scnet.planCredits, 60000, 'planCredits 配置保真')
-  rmSync(scnetRoot, { recursive: true, force: true })
+  await removeFixture(scnetRoot, { recursive: true, force: true })
   if (prevHome === undefined) delete process.env.DSH_HOME
   else process.env.DSH_HOME = prevHome
   console.log('[ok] apply() 真实路径 SCNet 本地 Credits 计量(月度窗口/refreshCodingPlan/网关 JSON 安全/配置保真)通过')
@@ -3729,7 +3741,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   // 客户端 descriptor 清单与方法名对齐(双端 invocation 一致)。
   const clientSource = readClientSource()
   assert.ok(clientSource.includes("method: 'importLegacyHistory'"), '客户端 descriptor 声明 importLegacyHistory')
-  rmSync(importRoot, { recursive: true, force: true })
+  await removeFixture(importRoot, { recursive: true, force: true })
   if (prevHome === undefined) delete process.env.DSH_HOME
   else process.env.DSH_HOME = prevHome
   console.log('[ok] apply() 真实路径导入安装前历史(RPC/明细拉取/幂等/网关 JSON 安全)通过')
@@ -3768,7 +3780,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   // 宿主接线:apply 的启动定时器调用 runStartupImports。
   const hostSource = readFileSync(new URL('../lib/index.js', import.meta.url), 'utf8')
   assert.ok(hostSource.includes('runStartupImports(ledger, join(resolveDshHome(), \'sessions\'), sessionSource)'), 'apply 启动定时器接线自动导入')
-  rmSync(autoRoot, { recursive: true, force: true })
+  await removeFixture(autoRoot, { recursive: true, force: true })
   if (prevHome === undefined) delete process.env.DSH_HOME
   else process.env.DSH_HOME = prevHome
   console.log('[ok] 启动期自动导入(首次启动导入/打标/后续启动跳过/配置保真/接线)通过')
@@ -3827,7 +3839,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   assert.ok(readFileSync(new URL('../src/display/controls.js', import.meta.url), 'utf8').includes("t('languageLabel')"), '语言选择在显示预览的右侧面板')
   between('load: api.loadDisplay', branch.display, branch.pricing, '交互预览在显示标签按需加载')
   // 价格:峰谷 + 价格表 + 匹配 + 拓展目录 + 官方同步。
-  between('el(PeakPanel, { state, draft, setDraft, t })', branch.pricing, tabsSrc.length, '峰谷计价面板在价格标签')
+  between('el(PeakPanel, { state, draft, setDraft, t, api })', branch.pricing, tabsSrc.length, '峰谷计价面板在价格标签')
   between("t('priceTableTitle')", branch.pricing, tabsSrc.length, '价格表在价格标签')
   between("t('dataSync')", branch.pricing, tabsSrc.length, '官方价格同步在价格标签')
   // 拓展价格表面板已移除:第三方价格卡片改由价格表内的厂商折叠分组承载。
@@ -4076,7 +4088,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
 {
   console.log('[..] Plan/API 双轨计费与 Token Plan 统计(issue #64)')
   const planHome = join(tmpdir(), 'dsh-cost-meter-test-plan-home')
-  rmSync(planHome, { recursive: true, force: true })
+  await removeFixture(planHome, { recursive: true, force: true })
   process.env.DSH_HOME = planHome
 
   // 10.1) 分类器:别名归并、模型级覆盖、厂商级配置、auto 默认。
@@ -4312,7 +4324,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   assert.ok(clientSrc.includes("function billingClassOfLocal"), '客户端分类镜像存在')
   assert.ok(clientSrc.includes("function moneyCostOf"), '真金白银口径辅助函数存在')
   assert.ok(clientSrc.includes("function usageSplit"), '会话投影拆分函数存在')
-  assert.ok(clientSrc.includes("sessionLineSplit") && clientSrc.includes("costChipPlan"), '会话徽章/dock 双轨文案接线')
+  assert.ok(clientSrc.includes("sessionLineSplit") && clientSrc.includes("sessionLineSplitCompact"), '会话费用行双轨文案接线')
   assert.ok(clientSrc.includes("function PlanStatsPanel"), 'PlanStatsPanel 组件存在')
   assert.ok(clientSrc.includes("el(PlanStatsPanel,"), '用量标签挂载 PlanStatsPanel')
   assert.ok(clientSrc.includes("planStatsBarTip") && clientSrc.includes("planStatsNote"), '曲线悬停与口径说明文案存在')
@@ -4513,7 +4525,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   // 构造「第三方模型被误套 DeepSeek 默认低价」的历史桶,修复后按目录价重算,
   // deepseek-peak 桶跳过(峰谷近似易误伤),day/session/apiCost 三级联动,幂等。
   const repairHome = join(tmpdir(), 'dsh-cost-meter-test-repair-pricing')
-  rmSync(repairHome, { recursive: true, force: true })
+  await removeFixture(repairHome, { recursive: true, force: true })
   process.env.DSH_HOME = repairHome
   const repairLedger = Ledger.open()
   repairLedger.config.codingPlans.minimax.enabled = true
@@ -4579,7 +4591,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
 
   // 一致性重建:复刻 08-15 式账本(桶 apiCost=cost 全额残留、容器旧值、无明细残差)。
   const rebuildHome = join(tmpdir(), 'dsh-cost-meter-test-rebuild-v3')
-  rmSync(rebuildHome, { recursive: true, force: true })
+  await removeFixture(rebuildHome, { recursive: true, force: true })
   process.env.DSH_HOME = rebuildHome
   const rbLedger = Ledger.open()
   rbLedger.config.goQuota.enabled = true
@@ -4733,7 +4745,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   assert.ok(onDisk.includes('"apiKey":""'), '落盘保留空占位字段形状')
   assert.equal(flushLedger.config.goQuota.apiKey, SECRET_SAMPLES.go, '内存 config 保留明文(运行时兜底)')
   flushLedger.close()
-  rmSync(flushRoot, { recursive: true, force: true })
+  await removeFixture(flushRoot, { recursive: true, force: true })
 
   // 3) runSecretMigration:成功 / 已配置 / 不可写 / 幂等 / 火山 AKID:SK 拆分 五条路径。
   const { runSecretMigration, SECRET_MIGRATION_ID } = await import('../lib/index.js')
@@ -4844,7 +4856,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   const codecStateV168 = TYPERT.invocations.find(i => i.method === 'getState').result.schema
   const codecCheckV168 = codecStateV168.safeParse(JSON.parse(JSON.stringify(state)))
   assert.ok(codecCheckV168.success, '含密钥状态字段的快照通过 getState strict codec:' + (codecCheckV168.success ? '' : JSON.stringify(codecCheckV168.error.issues.slice(0, 4))))
-  rmSync(stateRoot, { recursive: true, force: true })
+  await removeFixture(stateRoot, { recursive: true, force: true })
   if (prevStateHome === undefined) delete process.env.DSH_HOME
   else process.env.DSH_HOME = prevStateHome
 
@@ -4864,7 +4876,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   assert.equal(goPatchGate.errors.length, 0, '含密钥补丁整体合法(非密钥字段不报错)')
   assert.equal(goPatchGate.config.goQuota.apiKey, '', '补丁中的 goQuota.apiKey 被剥离')
 
-  for (const root of secretTmpRoots) rmSync(root, { recursive: true, force: true })
+  for (const root of secretTmpRoots) await removeFixture(root, { recursive: true, force: true })
   console.log('[ok] 密钥治理(落盘/下发脱敏/存量迁移五路径/strict codec/RPC 对齐)(v1.6.8)通过')
 }
 
@@ -5055,7 +5067,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
     assert.equal(state.meta.timezoneOffsetMinutes, -new Date().getTimezoneOffset(), 'meta 偏移与宿主进程一致')
     const codecTz = TYPERT.invocations.find(i => i.method === 'getState').result.schema.safeParse(JSON.parse(JSON.stringify(state)))
     assert.ok(codecTz.success, '含 meta.timezone 的快照通过 getState strict codec:' + (codecTz.success ? '' : JSON.stringify(codecTz.error.issues.slice(0, 3))))
-    rmSync(tzRoot, { recursive: true, force: true })
+    await removeFixture(tzRoot, { recursive: true, force: true })
     if (prevHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = prevHome
   }
@@ -5204,7 +5216,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
     assert.ok(Array.isArray(st.recent) && st.recent.length <= 25, '滚动指纹列表有界(≤25),实际 ' + (st.recent?.length ?? 'n/a'))
     usageProjectionStateSchema.parse(st)
   }
-  rmSync(projRoot11, { recursive: true, force: true })
+  await removeFixture(projRoot11, { recursive: true, force: true })
   console.log('[ok] 投影折叠指纹去重(包装单链计入/急切对单记/旧 checkpoint 兼容/有界)通过')
 }
 
@@ -5289,7 +5301,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   assert.ok(Math.abs(day11.sessions[0].cost) < 1e-9, '会话合计同步扣回')
   const r11b = unpriceLocalOriginModels(ledger11)
   assert.equal(r11b.zeroedBuckets, 0, '二次运行幂等')
-  rmSync(root11, { recursive: true, force: true })
+  await removeFixture(root11, { recursive: true, force: true })
   console.log('[ok] 本地模型误价清洗迁移(归零/扣回/llm- 前缀/幂等)通过')
 }
 
@@ -5300,7 +5312,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   assert.ok(idx11.includes('task.catch(() => {})'), 'serve-stale:后台任务拒绝被吞掉(无 unhandled rejection)')
   const client11 = readClientSource()
   assert.ok(client11.includes('function useProjectionRefresh(props, usage)'), '客户端投影联动刷新 hook 存在')
-  assert.ok((client11.match(/useProjectionRefresh\(props, /g) || []).length >= 3, '会话徽章(dock/header)与侧边栏页脚三处挂载(覆盖 position=off)')
+  assert.ok((client11.match(/useProjectionRefresh\(props, /g) || []).length >= 2, '输入区费用入口与侧边栏页脚两处挂载投影联动刷新')
   assert.ok(client11.includes("setTimeout(() => { props.api?.reload?.() }, 800)"), '800ms 防抖后触发 getState 重载(今日费用 ≈1s 更新)')
   console.log('[ok] 今日费用实时化接线哨兵(serve-stale/投影联动刷新)通过')
 }
@@ -5336,7 +5348,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
   assert.equal(day11c.output, 100, '哨兵覆盖下 token 照记(output 桶)')
   assert.ok(Math.abs(day11c.cost) < 1e-9, '哨兵覆盖下费用恒 0')
   assert.ok(Math.abs(day11c.byProviderModel['mycloud:special-model'].cost) < 1e-9, '哨兵覆盖按原 provider 键入账')
-  rmSync(root11c, { recursive: true, force: true })
+  await removeFixture(root11c, { recursive: true, force: true })
 
   // ② updateConfig e2e:写入 __local__ 覆盖后,当日已误计金额即时归零(token 保留)。
   const prevHome11 = process.env.DSH_HOME
@@ -5378,7 +5390,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
       assert.ok(codec11.success, '改映射后快照仍通过 updateConfig strict codec:' + (codec11.success ? '' : JSON.stringify(codec11.error.issues.slice(0, 3))))
     }
   } finally {
-    rmSync(root11d, { recursive: true, force: true })
+    await removeFixture(root11d, { recursive: true, force: true })
     if (prevHome11 === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = prevHome11
   }
@@ -5469,7 +5481,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
     assert.ok(st.byProviderModel?.['deepseek:deepseek-v4-flash'] !== undefined, '循环步样本照常计入')
     usageProjectionStateSchema.parse(st)
   }
-  rmSync(projRoot12, { recursive: true, force: true })
+  await removeFixture(projRoot12, { recursive: true, force: true })
   console.log('[ok] 投影折叠计入 compaction/summary(两代路由/回落/豁免窗口/包装改挂)通过')
 }
 
@@ -5504,7 +5516,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
     assert.equal(r.output, bucket.output, '回放与折叠 output 一致:' + key)
     assert.equal(r.cacheRead, bucket.cacheRead, '回放与折叠 cacheRead 一致:' + key)
   }
-  rmSync(projRoot12b, { recursive: true, force: true })
+  await removeFixture(projRoot12b, { recursive: true, force: true })
   console.log('[ok] 历史回放计入 compaction/summary + 折叠/回放逐位一致通过')
 }
 
@@ -5611,7 +5623,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
     const codec13 = TYPERT.invocations.find(i => i.method === 'getState').result.schema.safeParse(JSON.parse(JSON.stringify(stateEn13)))
     assert.ok(codec13.success, '含 qwen 的快照通过 getState strict codec:' + (codec13.success ? '' : JSON.stringify(codec13.error.issues.slice(0, 3))))
   } finally {
-    rmSync(root13, { recursive: true, force: true })
+    await removeFixture(root13, { recursive: true, force: true })
     if (prevHome13 === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = prevHome13
   }
@@ -5751,7 +5763,7 @@ console.log('[ok] OpenRouter/SiliconFlow/CommandCode 解析器与白名单通过
     const refreshCodec79 = TYPERT.invocations.find(i => i.method === 'refreshCustomBalance')
     assert.ok(refreshCodec79.parameters.length === 1 && refreshCodec79.parameters[0].name === 'index', 'refreshCustomBalance 声明 index 参数(codec 可选 0-7)')
   } finally {
-    rmSync(root79, { recursive: true, force: true })
+    await removeFixture(root79, { recursive: true, force: true })
     if (prevHome79 === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = prevHome79
   }
@@ -5793,32 +5805,25 @@ await import('./typert-codecs.mjs')
   const prevHome81 = process.env.DSH_HOME
   const root81 = join(tmpdir(), `cm-reconcile-currency-${Date.now()}`)
   mkdirSync(join(root81, 'storages', 'cost-meter'), { recursive: true })
-  // 预置:今日早间余额参考点(CNY 账户,总额 100)+ 今日本地费用 $3.99 → 同日晚间
-  // 拉取(总额 58,变动 ¥42)触发 drift。对账只在同日两次拉取间比对(跨天仅打基准)。
+  // 挂载后先以 CNY 余额 100 建立基准，再增加本地费用 $3.99。
+  // 第二次查询余额 58，验证 ¥42 变动与非零本地费用的币种显示。
   const todayKey81 = localDayKey(Date.now())
   writeFileSync(join(root81, 'storages', 'cost-meter', 'ledger.json'), JSON.stringify({
     version: 1,
     config: sanitizeConfig({ balance: { reconcile: true }, exchangeRate: 7.2 }),
     balanceRef: { date: todayKey81, total: 100, granted: 1, topped: 99, currency: 'CNY', at: Date.now() - 3600_000, ledgerCost: 0 },
-    days: {
-      [todayKey81]: {
-        date: todayKey81, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, calls: 1,
-        cost: 3.99, apiCost: 3.99,
-        byProviderModel: { 'deepseek:deepseek-v4-flash': { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, calls: 1, cost: 3.99, apiCost: 3.99 } },
-        sessions: [],
-      },
-    },
+    days: {},
   }))
   process.env.DSH_HOME = root81
   const prevKey81 = process.env.DEEPSEEK_API_KEY
   process.env.DEEPSEEK_API_KEY = 'sk-test-81'
   try {
     const provided81 = {}
-    // 拦截官方余额查询:注入 CNY 账户(总额 58 → 当日变动 ¥42,与 $3.99 偏差巨大)。
+    let total81 = 100
     const origFetch81 = globalThis.fetch
     globalThis.fetch = async () => Response.json({
         is_available: true,
-        balance_infos: [{ currency: 'CNY', total_balance: '58', granted_balance: '1', topped_up_balance: '57' }],
+        balance_infos: [{ currency: 'CNY', total_balance: String(total81), granted_balance: '1', topped_up_balance: String(total81 - 1) }],
     })
     try {
       const { apply: apply81 } = await import('../lib/index.js')
@@ -5830,18 +5835,36 @@ await import('./typert-codecs.mjs')
         logger: console,
         get: key => (key === 'settings' ? { get: () => ({}) } : undefined),
       })
+      const baseline81 = await provided81.costMeter.refreshBalance()
+      assert.equal(baseline81.state.reconcile.message, '', '首次查询只建立当前来源基准')
+      const ledgerPath81 = join(root81, 'storages', 'cost-meter', 'ledger.json')
+      for (let attempt = 0; attempt < 100 && JSON.parse(readFileSync(ledgerPath81, 'utf8')).balanceRef?.total !== 100; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 50))
+      }
+      assert.equal(JSON.parse(readFileSync(ledgerPath81, 'utf8')).balanceRef?.total, 100, '基准已持久化')
+      const recorded81 = Ledger.open()
+      recorded81.days[todayKey81] = {
+        date: todayKey81, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, calls: 1,
+        cost: 3.99, apiCost: 3.99,
+        byProviderModel: { 'deepseek:deepseek-v4-flash': { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, calls: 1, cost: 3.99, apiCost: 3.99 } },
+        sessions: [],
+      }
+      recorded81.scheduleWrite()
+      await recorded81.close()
+      total81 = 58
       const state81 = await provided81.costMeter.refreshBalance()
       const msg81 = state81?.state?.reconcile?.message ?? ''
       assert.ok(typeof msg81 === 'string' && msg81.length > 0, 'CNY 账户触发 drift 警告:' + JSON.stringify(state81?.state?.reconcile))
       const hasYenCost = msg81.includes('¥') && /¥[\d.]+（≈\$/.test(msg81)
       assert.ok(hasYenCost, 'cost 侧为 ¥ 并附 ≈USD(不再恒 $):' + msg81)
+      assert.ok(msg81.includes('¥28.7280（≈$3.9900）'), '两次查询之间的 $3.99 按汇率折算为人民币:' + msg81)
       // delta 侧(CNY 账户)仍是 ¥ 原生 + ≈USD。
       assert.ok(/变动 ¥[\d.]+/.test(msg81), 'delta 侧保持 ¥ 原生币种:' + msg81)
     } finally {
       globalThis.fetch = origFetch81
     }
   } finally {
-    rmSync(root81, { recursive: true, force: true })
+    await removeFixture(root81, { recursive: true, force: true })
     if (prevKey81 === undefined) delete process.env.DEEPSEEK_API_KEY
     else process.env.DEEPSEEK_API_KEY = prevKey81
     if (prevHome81 === undefined) delete process.env.DSH_HOME
@@ -5872,10 +5895,11 @@ await import('./typert-codecs.mjs')
   try {
     const provided302 = {}
     const origFetch302 = globalThis.fetch
+    let balance302 = { currency: 'CNY', total_balance: '827.2620', granted_balance: '38.4004', topped_up_balance: '788.8616' }
     // 当日主要使用第三方渠道:官方余额只在赠送桶减少,充值桶不变。
     globalThis.fetch = async () => Response.json({
         is_available: true,
-        balance_infos: [{ currency: 'CNY', total_balance: '821.7149', granted_balance: '32.8532', topped_up_balance: '788.8617' }],
+        balance_infos: [balance302],
     })
     try {
       const { apply: apply302 } = await import('../lib/index.js')
@@ -5887,6 +5911,9 @@ await import('./typert-codecs.mjs')
         logger: console,
         get: key => (key === 'settings' ? { get: () => ({}) } : undefined),
       })
+      const baseline302 = await provided302.costMeter.refreshBalance()
+      assert.equal(baseline302.state.reconcile.message, '', '首次查询建立赠送余额基准')
+      balance302 = { currency: 'CNY', total_balance: '821.7149', granted_balance: '32.8532', topped_up_balance: '788.8617' }
       const first302 = await provided302.costMeter.refreshBalance()
       const notice302 = first302?.state?.reconcile ?? {}
       const msg302 = notice302.message ?? ''
@@ -5905,7 +5932,7 @@ await import('./typert-codecs.mjs')
       globalThis.fetch = origFetch302
     }
   } finally {
-    rmSync(root302, { recursive: true, force: true })
+    await removeFixture(root302, { recursive: true, force: true })
     if (prevKey302 === undefined) delete process.env.DEEPSEEK_API_KEY
     else process.env.DEEPSEEK_API_KEY = prevKey302
     if (prevHome302 === undefined) delete process.env.DSH_HOME
@@ -6114,7 +6141,7 @@ function m_costOf85(entry, tokens) {
   assert.ok(cbDisk.includes('{{MY_TRACE_VAR}}'), '落盘保留占位符')
   assert.ok(cbDisk.includes('relay.example.com'), '落盘保留 allowedHosts')
   cbLedger.close()
-  rmSync(cbRoot, { recursive: true, force: true })
+  await removeFixture(cbRoot, { recursive: true, force: true })
   console.log('[ok] 请求头脱敏三条路径(落盘/下发/补丁,issue #86)通过')
 }
 
@@ -6184,7 +6211,7 @@ function m_costOf85(entry, tokens) {
   assert.equal(pndResult.pending.length, 1, '不可写进入 pending')
   assert.equal(pndPair.ledger.config.customBalances[0].request.headers.Authorization, PLAIN, '不可写保留明文(绝不丢密钥)')
   pndPair.ledger.close()
-  for (const r of [okPair, covPair, pndPair]) rmSync(r.root, { recursive: true, force: true })
+  for (const r of [okPair, covPair, pndPair]) await removeFixture(r.root, { recursive: true, force: true })
   console.log('[ok] 请求头密钥迁移三路径(成功/已配置/不可写,issue #86)通过')
 }
 
@@ -6319,7 +6346,7 @@ function m_costOf85(entry, tokens) {
     const got = await readSessionRecordsAsync(p)
     assert.equal(got.length, lines.length, '流式多帧行数完整')
     assert.deepEqual(got[0], JSON.parse(lines[0]), '会话头完整')
-    rmSync(root, { recursive: true, force: true })
+    await removeFixture(root, { recursive: true, force: true })
   }
   // b) 解压预算:超小 maxDecompressed 立即抛 RangeError。
   {
@@ -6329,7 +6356,7 @@ function m_costOf85(entry, tokens) {
     await assert.rejects(
       () => readSessionRecordsAsync(join(root, 'z.zstd'), { maxDecompressed: 1 }),
       /decompress budget exceeded/, '解压预算超限抛错(防解压炸弹)')
-    rmSync(root, { recursive: true, force: true })
+    await removeFixture(root, { recursive: true, force: true })
   }
   // c) 结构损坏:合法帧 + 垃圾字节 + 后续合法帧——垃圾之后的内容按旧版语义忽略,
   //    垃圾之前的记录完整保留。
@@ -6341,7 +6368,7 @@ function m_costOf85(entry, tokens) {
     const got = await readSessionRecordsAsync(join(root, 'corrupt.zstd'))
     assert.equal(got.length, 1, '损坏点后内容被忽略(与旧版全量扫描同语义)')
     assert.equal(got[0].id, 'good', '损坏点前的记录完整保留')
-    rmSync(root, { recursive: true, force: true })
+    await removeFixture(root, { recursive: true, force: true })
   }
   // d) 巨长打包行不进产物(探针加速,行为与同步版一致)。
   {
@@ -6354,7 +6381,7 @@ function m_costOf85(entry, tokens) {
     writeFileSync(join(root, 'plain.jsonl'), lines.join('\n') + '\n')
     const got = await readSessionRecordsAsync(join(root, 'plain.jsonl'))
     assert.equal(got.length, 2, '巨长打包行被过滤,普通事件保留')
-    rmSync(root, { recursive: true, force: true })
+    await removeFixture(root, { recursive: true, force: true })
   }
   console.log('[ok] 流式迭代器语义(多帧/预算/损坏停止/打包行,issue #88)通过')
 }
@@ -6377,7 +6404,7 @@ function m_costOf85(entry, tokens) {
   const got = await readSessionRecordsAsync(join(root, 'proj', 'big', 'session.jsonl.zstd'))
   assert.equal(got.length, 501, '大日志流式读取只保留事件行(打包行全部过滤)')
   assert.equal(got[500].data.step, 500, '末尾事件完整(跨帧行缓冲)')
-  rmSync(root, { recursive: true, force: true })
+  await removeFixture(root, { recursive: true, force: true })
   console.log('[ok] 大日志流式回归(issue #88 最小复现)通过')
 }
 
@@ -6500,7 +6527,7 @@ function m_costOf85(entry, tokens) {
   assert.deepEqual(Object.keys(GATEWAY_PROVIDER_ADAPTERS).sort(), ['antigravity', 'claude', 'codex', 'kimi', 'workbuddy', 'xai'])
   for (const headers of [ANTIGRAVITY_REQUEST_HEADERS, CLAUDE_REQUEST_HEADERS, CODEX_REQUEST_HEADERS, KIMI_REQUEST_HEADERS, XAI_REQUEST_HEADERS]) assert.ok(Object.values(headers).includes('Bearer $TOKEN$'))
   assert.equal(ANTIGRAVITY_QUOTA_URLS.length, 3)
-  assert.equal(ANTIGRAVITY_QUOTA_URLS[0], 'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary')
+  assert.equal(ANTIGRAVITY_QUOTA_URLS[0], 'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary')
   assert.equal(GATEWAY_PROVIDER_ADAPTERS.antigravity.requests({ projectId: 'fake-project-id' }).length, 3)
   const adapterSource = readFileSync(new URL('../lib/gateway-quota-adapters.js', import.meta.url), 'utf8')
   assert.equal(adapterSource.includes('rate-limit-reset-credits/consume'), false)
@@ -6895,6 +6922,7 @@ await import('./model-labels.mjs')
 await import('./session-list-costs.mjs')
 await import('./balance-credentials.mjs')
 await import('./account-balance.mjs')
+await import('./balance-accounts-cache.mjs')
 await import('./factory-quota.mjs')
 await import('./qwen-cli.mjs')
 await import('./bailian-cli.mjs')
@@ -6909,6 +6937,7 @@ await import('./custom-balance-ui.mjs')
 await import('./custom-balance-host.mjs')
 await import('./custom-balance-post.mjs')
 await import('./balance-display-currency.mjs')
+await import('./balance-currency-display.mjs')
 await import('./settings-regressions.mjs')
 await import('./model-statistics.mjs')
 await import('./display-controls.mjs')
@@ -6928,6 +6957,7 @@ await import('./project-audit.mjs')
 await import('./deepseek-pricing-september.mjs')
 await import('./deepseek-pricing-official.mjs')
 await import('./model-history-reprice.mjs')
+await import('./history-reprice-usage.mjs')
 await import('./sidebar-simple.mjs')
 await import('./sidebar-regressions.mjs')
 await import('./gpt-astra-pricing.mjs')
@@ -6984,6 +7014,7 @@ await import('./ledger-frozen-fx.mjs')
 await import('./session-cost-display-fx.mjs')
 await import('./billion-context-billing.mjs')
 await import('./billion-context-compatibility.mjs')
+await import('./billion-context-history-cache.mjs')
 {
   // This fixture instruments fs/timers; keep it out of other tests' process.
   const peerTest = spawnSync(process.execPath, ['test/billion-context-peer.mjs'], { cwd: join(import.meta.dirname, '..'), encoding: 'utf8' })
@@ -7000,23 +7031,29 @@ await import('./chatgpt-subscription-compat.mjs')
 await import('./chatgpt-subscription-quota.mjs')
 await import('./opendesign-quota-degradation.mjs')
 await import('./session-storage-compat.mjs')
+await import('./backfill-shutdown.mjs')
 await import('./session-readpaths-rdb.mjs')
 await import('./opendesign-preflight.mjs')
 await import('./opendesign-credentials.mjs')
+await import('./opendesign-login.mjs')
+await import('./opendesign-login-service.mjs')
 await import('./pocket-layout-static.mjs')
 await import('./skin-occlusion-static.mjs')
 console.log('[ok] 全部验证通过')
 
 await import('./exchange-rates.mjs')
+await import('./currency-catalog.mjs')
 await import('./custom-model-prices.mjs')
 await import('./context-activity.mjs')
 await import('./review-billing-regressions.mjs')
+await import('./ledger-read-coalescing.mjs')
 await import('./review-ledger-writer.mjs')
 await import('./ledger-config-recovery.mjs')
 await import('./ledger-worker-isolation.mjs')
 await import('./review-journal-storage.mjs')
 await import('./review-release.mjs')
 await import('./billion-null-usage.mjs')
+await import('./billion-host-repair.mjs')
 
 await import('./settings-pages.mjs')
 
@@ -7031,3 +7068,18 @@ await import('./balance-notice-loading.mjs')
 await import('./display-onboarding.mjs')
 
 await import('./official-price-sync-currency.mjs')
+
+await import('./catalog-october-28.mjs')
+await import('./catalog-november-05.mjs')
+await import('./custom-balance-expressions.mjs')
+await import('./provider-peak-schedule.mjs')
+await import('./peak-timezone.mjs')
+await import('./native-search-manual.mjs')
+await import('./billing-check.mjs')
+
+await import('./coding-plan-placeholder.mjs')
+await import('./local-savings.mjs')
+await import('./sidebar-icons.mjs')
+
+// Drain any remaining async host disposers before the synchronous exit cleanup.
+await removeFixture(suiteRoot, { recursive: true, force: true })

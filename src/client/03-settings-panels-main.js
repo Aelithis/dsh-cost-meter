@@ -9,6 +9,10 @@
     }
 
     const loadedPages = new WeakMap()
+    function loadWithDeadline(load, message) {
+      let timer
+      return Promise.race([Promise.resolve().then(load), new Promise((_, reject) => { timer = setTimeout(() => reject(Error(message)), 15000) })]).finally(() => clearTimeout(timer))
+    }
     const warmPage = (load, props) => load?.().then(page => { loadedPages.set(load, page); return page.prefetch?.(props) }).catch(() => {})
     function BillingAccuracyNote({ state }) {
       const meter = state?.billionContext
@@ -24,10 +28,14 @@
         let active = true
         setError('')
         if (typeof load !== 'function') return
-        load().then(page => { loadedPages.set(load, page); if (active) setPage(() => page) }, e => { if (active) setError(String(e.message ?? e)) })
+        let pending
+        try { pending = load() } catch (error) { pending = Promise.reject(error) }
+        pending.then(page => { loadedPages.set(load, page); if (active) setPage(() => page) }, e => { if (active) setError(String(e.message ?? e)) })
         return () => { active = false }
       }, [props.api, props.load, retry])
       if (Page) return el(Page, { ...props, formatMoneyUsd, formatTokens, resolveLocale })
+      // Keep the original sidebar usable while this optional presentation loads or fails.
+      if (props.fallback) return el(Fragment, null, props.fallback, error ? el('button', { type: 'button', className: 'cm-btn small', title: error, onClick: () => setRetry(n => n + 1) }, resolveLocale(props.state?.config) === 'en' ? 'Retry icon layout' : '重试图标布局') : null)
       if (props.quiet) return null
       return el('div', { className: error ? '' : 'cm-loading', role: error ? 'alert' : 'status', 'aria-label': resolveLocale(props.state?.config) === 'en' ? 'Loading' : '正在读取' }, error || el(Fragment, null, el('i'), el('i'), el('i')), error ? el('button', { className: 'cm-btn', onClick: () => setRetry(n => n + 1) }, '↻') : null)
     }
@@ -53,45 +61,33 @@
      */
     const STAT_DIALOG_CLASS = 'cm-stat-dialog'
 
+    // 费用明细弹窗:标题栏入口与输入区下方入口共用。
+    function CostDetailsDialog(props) {
+      const dialog = React.useRef(null)
+      useEffect(() => { if (props.open) dialog.current?.showModal() }, [props.open])
+      if (!props.open) return null
+      const en = resolveLocale(props.state?.config) === 'en'
+      const label = costDetailsLabel(en)
+      const close = props.onClose
+      return el('dialog', { ref: dialog, role: 'dialog', className: STAT_DIALOG_CLASS, 'aria-label': label, onCancel: close },
+        el('header', { className: 'cm-stat-dialog-head' }, el('strong', null, label), el('button', { type: 'button', className: 'cm-btn', autoFocus: true, 'aria-label': en ? 'Close' : '关闭', onClick: close }, '×')),
+        el('div', { className: 'cm-stat-dialog-body' }, props.state ? el(BillingStatistics, { key: props.sessionId, state: props.state, api: props.api, sessionId: props.sessionId }) : el('p', { role: props.error ? 'alert' : 'status' }, props.error || (en ? 'Loading…' : '加载中…'), el('button', { type: 'button', className: 'cm-btn', onClick: () => props.api.reload() }, en ? 'Retry' : '重试'))))
+    }
+
     function SessionStatisticsButton(props) {
       const snapshot = props.useCost?.(s => s), state = snapshot?.state
-      const [openedId, setOpenedId] = useState(null), dialog = React.useRef(null)
-      const hidden = state?.config[props.entryPosition === 'header' ? 'hideSessionCostHeader' : 'hideSessionCostDock'] === true
+      const [openedId, setOpenedId] = useState(null)
+      const hidden = state?.config?.hideSessionCostHeader === true
       const open = !hidden && !!props.sessionId && openedId === props.sessionId
-      useEffect(() => { if (open) dialog.current?.showModal() }, [open])
       useEffect(() => { setOpenedId(null) }, [props.sessionId, hidden])
       // Prefetch only on hover/focus. A mounted fee button must not replay logs.
       if (!props.sessionId || hidden) return null
       const en = resolveLocale(state?.config) === 'en'
-      const label = en ? 'Conversation cost details' : '本会话费用明细'
+      const label = costDetailsLabel(en)
+      const hover = () => warmPage(props.api.loadStatistics, { state, sessionId: props.sessionId })
       return el(Fragment, null,
-        el('button', { type: 'button', className: 'cm-btn cm-stat-entry cm-stat-' + (props.entryPosition || 'dock'), title: label, 'aria-label': label, 'aria-haspopup': 'dialog', onMouseEnter: () => warmPage(props.api.loadStatistics, { state, sessionId: props.sessionId }), onFocus: () => warmPage(props.api.loadStatistics, { state, sessionId: props.sessionId }), onClick: () => setOpenedId(props.sessionId) }, en ? 'Cost details' : '费用明细'),
-        open ? el('dialog', { ref: dialog, role: 'dialog', className: STAT_DIALOG_CLASS, 'aria-label': label, onCancel: () => setOpenedId(null) },
-          el('header', { className: 'cm-stat-dialog-head' }, el('strong', null, label), el('button', { type: 'button', className: 'cm-btn', autoFocus: true, 'aria-label': en ? 'Close' : '关闭', onClick: () => setOpenedId(null) }, '×')),
-          el('div', { className: 'cm-stat-dialog-body' }, state ? el(BillingStatistics, { key: props.sessionId, state, api: props.api, sessionId: props.sessionId }) : el('p', { role: snapshot?.error ? 'alert' : 'status' }, snapshot?.error || (en ? 'Loading…' : '加载中…'), el('button', { type: 'button', className: 'cm-btn', onClick: () => props.api.reload() }, en ? 'Retry' : '重试')))) : null)
-    }
-
-    function ExternalUsagePanel({ state, t }) {
-      const ext = state.externalUsage
-      if (!ext) return null
-      const config = state.config
-      const amount = day => formatMoneyUsd(displayCostOf(day, config), config)
-      const usage = day => t('callsTokens', { calls: day.calls, input: formatTokens(day.input), cache: formatTokens(day.cacheRead + day.cacheWrite), output: formatTokens(day.output) })
-      const sum = (a, b) => ({ calls: a.calls + b.calls, input: a.input + b.input, output: a.output + b.output, cacheRead: a.cacheRead + b.cacheRead, cacheWrite: a.cacheWrite + b.cacheWrite, cost: displayCostOf(a, config) + b.cost, apiCost: displayCostOf(a, config) + b.cost })
-      const row = (label, day) => el('tr', { key: label }, el('td', null, label), el('td', { className: 'num' }, String(day.calls)), el('td', { className: 'num' }, formatTokens(day.input)), el('td', { className: 'num' }, formatTokens(day.cacheRead + day.cacheWrite)), el('td', { className: 'num' }, formatTokens(day.output)), el('td', { className: 'num' }, amount(day)))
-      const table = rows => el('div', { className: 'cm-scroll' }, el('table', { className: 'cm-table' }, el('thead', null, el('tr', null, el('th', null, t('colDate')), ...['colCalls', 'colInTok', 'colCacheTok', 'colOutTok', 'colCost'].map(k => el('th', { className: 'num' }, t(k))))), el('tbody', null, rows)))
-      return el('section', { className: 'cm-budget' },
-        el('h3', { className: 'cm-h' }, t('externalUsage')),
-        ext.stale ? el('p', { className: 'cm-note' }, t('externalStale')) : null,
-        el('div', { className: 'cm-cards' }, ['today', 'month', 'total'].map((key, i) => {
-          const combined = sum(state[key], ext.combined[key])
-          return el(Card, { key, title: t('combinedUsage') + ' · ' + t(['cardToday', 'cardMonth', 'cardTotal'][i]), value: amount(combined), sub: usage(combined) })
-        })),
-        ...ext.sources.map(source => el('details', { key: source.source },
-          el('summary', null, source.source + ' · ' + t('cardToday') + ' ' + amount(source.today) + ' · ' + t('cardMonth') + ' ' + amount(source.month) + ' · ' + usage(source.today)),
-          table(['today', 'month', 'total'].map((key, i) => row(t(['cardToday', 'cardMonth', 'cardTotal'][i]), source[key]))),
-          el('p', { className: 'cm-note' }, t('externalHistory')),
-          table(source.history.map(day => row(day.date, day))))))
+        el('button', { type: 'button', className: 'cm-btn cm-stat-entry cm-stat-header', title: label, 'aria-label': label, 'aria-haspopup': 'dialog', onMouseEnter: hover, onFocus: hover, onClick: () => setOpenedId(props.sessionId) }, en ? 'Cost details' : '费用明细'),
+        el(CostDetailsDialog, { open, onClose: () => setOpenedId(null), sessionId: props.sessionId, state, error: snapshot?.error, api: props.api }))
     }
 
     /** 折叠面板标题行:三角箭头 + 标题,aria-expanded 随 open 翻转(配合 .cm-collapse-h / .cm-caret 样式)。 */
@@ -297,12 +293,6 @@
         showId && rawTitle.length > 0 ? el('div', { className: 'cm-sess-id' }, shortId) : null)
     }
 
-    const CURRENCY_PRESETS = {
-      CNY: { symbol: '¥', decimals: 4, exchangeRate: 7.2 },
-      USD: { symbol: '$', decimals: 6, exchangeRate: 1 },
-      EUR: { symbol: '€', decimals: 6, exchangeRate: 0.92 },
-    }
-
     // ── 预算面板(设置页顶部) ──────────────────────────────────────────────
 
     function BudgetPanel(props) {
@@ -394,135 +384,7 @@
     // ── 峰谷面板(独立于预算:启用开关、提示开关、样式切换、时段条预览与窗口状态) ──
 
     function PeakPanel(props) {
-      const { state, draft, setDraft, t } = props
-      const config = state.config
-      const setField = (field, value) => {
-        if (draft === null) return
-        setDraft({ ...draft, [field]: value })
-      }
-      // 预览与状态行用草稿值,切换开关/样式即时可见效果。
-      const previewConfig = draft === null ? config : { ...config, ...draft }
-      const peakStatusText = (() => {
-        if (previewConfig.peakEnabled !== true) return t('peakOff')
-        const eff = Date.parse(previewConfig.peakEffectiveAt || '')
-        const now = Date.now()
-        if (Number.isFinite(eff) && now < eff) {
-          return t('peakNotEffective', { time: new Date(eff).toLocaleString() })
-        }
-        const windows = previewConfig.peakWindows ?? []
-        // 周末全谷价新规:处于周末区间时状态行显示「周末时段——全谷价」(与时段条一致)。
-        const view = peakPhaseAt(now, windows, previewConfig.peakHolidays)
-        if (view === null) return t('offPeakActive')
-        if (view.holiday === true) return t('holidayAllOffPeak')
-        if (view.weekend === true) return t('weekendAllOffPeak')
-        return view.inPeak ? t('peakActive') : t('offPeakActive')
-      })()
-      const peakText = (previewConfig.peakWindows?.length ?? 0) > 0
-        ? t('peakSummary', {
-          windows: previewConfig.peakWindows.map(w => w.start + ':00-' + w.end + ':00').join(resolveLocale(previewConfig) === 'zh' ? '、' : ', '),
-          time: previewConfig.peakEffectiveAt || t('unknown'),
-          status: peakStatusText,
-        })
-        : t('noPeakWindows', { status: peakStatusText })
-      return el('div', { className: 'cm-budget' },
-        el('div', { className: 'cm-budget-head' },
-          el('h3', { className: 'cm-h' }, t('peakPanelTitle')),
-          el('label', { className: 'cm-check' },
-            el('input', {
-              type: 'checkbox',
-              checked: draft?.peakEnabled !== false,
-              onChange: event => setField('peakEnabled', event.target.checked),
-            }),
-            el('span', null, t('peakEnabledLabel')))),
-        el('div', { className: 'cm-grid' },
-          el('div', { className: 'cm-field' },
-            el('label', { className: 'cm-check' },
-              el('input', {
-                type: 'checkbox',
-                checked: draft?.peakNotice !== false,
-                onChange: event => setField('peakNotice', event.target.checked),
-              }),
-              el('span', null, t('peakNoticeLabel')))),
-          el('div', { className: 'cm-field' },
-            el('label', null, t('peakStyleLabel')),
-            el('select', {
-              className: 'cm-input',
-              value: draft?.peakStyle ?? 'compact',
-              onChange: event => setField('peakStyle', event.target.value),
-            },
-              el('option', { value: 'progress' }, resolveLocale(draft) === 'en' ? 'Time progress' : '时间进度条'),
-              el('option', { value: 'compact' }, t('peakStyleCompact')),
-              el('option', { value: 'classic' }, t('peakStyleClassic'))))),
-        el('div', { className: 'cm-grid' },
-          el('div', { className: 'cm-field' },
-            el('label', { className: 'cm-check' },
-              el('input', {
-                type: 'checkbox',
-                checked: draft?.peakAlertEnabled !== false,
-                onChange: event => setField('peakAlertEnabled', event.target.checked),
-              }),
-              el('span', null, t('peakAlertLabel')))),
-          el('div', { className: 'cm-field' },
-            el('label', null, t('peakAlertAheadLabel')),
-            el('input', {
-              className: 'cm-input narrow', type: 'number', min: '1', max: '30', step: '1',
-              value: String(typeof draft?.peakAlertAhead === 'number' && Number.isFinite(draft.peakAlertAhead) && draft.peakAlertAhead >= 1 && draft.peakAlertAhead <= 30 ? draft.peakAlertAhead : 2),
-              onChange: event => {
-                const parsed = Number(event.target.value)
-                if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 30) setField('peakAlertAhead', parsed)
-              },
-            })),
-          el('div', { className: 'cm-field' },
-            el('label', null, t('peakAlertTargetLabel')),
-            el('select', {
-              className: 'cm-input',
-              value: draft?.peakAlertTarget === 'peak' || draft?.peakAlertTarget === 'offpeak' ? draft.peakAlertTarget : 'both',
-              onChange: event => setField('peakAlertTarget', event.target.value),
-            },
-              el('option', { value: 'both' }, t('peakAlertTargetBoth')),
-              el('option', { value: 'peak' }, t('peakAlertTargetPeak')),
-              el('option', { value: 'offpeak' }, t('peakAlertTargetOffPeak'))))),
-        el('div', { className: 'cm-grid' },
-          el('div', { className: 'cm-field' },
-            el('label', null, t('peakAlertPositionLabel')),
-            el('select', {
-              className: 'cm-input',
-              value: draft?.peakAlertPosition === 'center' ? 'center' : 'corner',
-              onChange: event => setField('peakAlertPosition', event.target.value),
-            },
-              el('option', { value: 'corner' }, t('peakAlertPositionCorner')),
-              el('option', { value: 'center' }, t('peakAlertPositionCenter')))),
-          el('div', { className: 'cm-field' },
-            el('label', { className: 'cm-check' },
-              el('input', {
-                type: 'checkbox',
-                checked: draft?.peakAlertWebNotify === true,
-                onChange: event => {
-                  setField('peakAlertWebNotify', event.target.checked)
-                  // 开启需用户手势申请浏览器通知权限(地址栏授权)。
-                  if (event.target.checked && window.Notification && Notification.permission === 'default') {
-                    // 旧 Safari 的 requestPermission 不返回 Promise,包一层防抛错。
-                    Promise.resolve(Notification.requestPermission()).catch(() => {})
-                  }
-                },
-              }),
-              el('span', null, t('peakAlertWebNotifyLabel'))),
-            el('p', { className: 'cm-hint' }, t('peakAlertWebNotifyHint')))),
-        el('div', { className: 'cm-field' },
-          el('label', null, t('peakAlertPreviewLabel')),
-          el('div', { className: 'cm-row' },
-            el('button', { className: 'cm-btn', onClick: () => window.cmPeakAlertPreview?.('peak') }, t('peakAlertPreviewPeak')),
-            el('button', { className: 'cm-btn', onClick: () => window.cmPeakAlertPreview?.('offpeak') }, t('peakAlertPreviewOffPeak')))),
-        el('div', { className: 'cm-peak-preview' },
-          draft?.peakEnabled !== false && draft?.peakNotice !== false
-            ? peakNoticeEl(state, previewConfig, t)
-            : el('p', { className: 'cm-hint' }, t('peakNoticeHiddenHint'))),
-        el('p', { className: 'cm-hint' }, peakText),
-        el('div', { className: 'cm-field' },
-          el('label', null, t('peakHolidaysLabel')),
-          el('input', { className: 'cm-input', defaultValue: (previewConfig.peakHolidays ?? []).join(', '),
-            onBlur: event => setField('peakHolidays', event.target.value.split(/[,，\s]+/).filter(Boolean)) })),
-        el('p', { className: 'cm-hint' }, t('weekendRuleNote')))
+      return el(BillingStatistics, { ...props, load: props.api.loadPricing, mode: 'peak-settings', peakHelpers: { peakPhaseAt, resolveLocale, peakNoticeEl } })
     }
 
     function numInput(props, onChange) {
@@ -551,9 +413,9 @@
       })
     }
 
-    function PriceInput({ value, entry, path, emptyMode, placeholder, label, title, t, onCommit }) {
+    function PriceInput({ value, entry, path, emptyMode, placeholder, label, title, t, onCommit, plain = false }) {
       const factor = priceFactor(entry, path)
-      const formatted = value == null ? '' : String(value) + (entry.multiplier !== undefined || entry.separateMultipliers ? ' × ' + factor : '')
+      const formatted = value == null ? '' : String(value) + (!plain && (entry.multiplier !== undefined || entry.separateMultipliers) ? ' × ' + factor : '')
       const [text, setText] = useState(formatted), [invalid, setInvalid] = useState(false)
       const dirty = useRef(false)
       useEffect(() => { if (!dirty.current) setText(formatted) }, [formatted])
@@ -570,12 +432,12 @@
         if (parts.length > 2 || !parts.every(part => number.test(part) && Number.isFinite(Number(part)))
           || !Number.isFinite(Number(parts[0]) * (parts.length === 2 ? Number(parts[1]) : factor))) { setInvalid(true); return }
         dirty.current = false; setInvalid(false)
-        setText(String(Number(parts[0])) + (entry.multiplier !== undefined || entry.separateMultipliers || parts.length === 2 ? ' × ' + (parts.length === 2 ? Number(parts[1]) : factor) : ''))
+        setText(String(Number(parts[0])) + (!plain && (entry.multiplier !== undefined || entry.separateMultipliers || parts.length === 2) ? ' × ' + (parts.length === 2 ? Number(parts[1]) : factor) : ''))
         onCommit(Number(parts[0]), parts.length === 2 ? Number(parts[1]) : undefined)
       }
       return el('input', { className: 'cm-input narrow', type: 'text', value: text,
         placeholder, 'aria-label': label, 'aria-invalid': invalid,
-        title: invalid ? t('priceMultiplyInvalid') : [title, t(entry.separateMultipliers ? 'priceMultiplySingle' : 'priceMultiplyAll'), value == null ? '' : '= ' + Number((value * factor).toPrecision(12))].filter(Boolean).join(' · '),
+        title: invalid ? t('priceMultiplyInvalid') : [title, plain ? '' : t(entry.separateMultipliers ? 'priceMultiplySingle' : 'priceMultiplyAll'), value == null ? '' : '= ' + Number((value * factor).toPrecision(12))].filter(Boolean).join(' · '),
         onChange: event => { dirty.current = true; setText(event.target.value); setInvalid(false) }, onBlur: commit,
         onKeyDown: event => {
           if (event.key === 'Enter') { event.preventDefault(); commit() }
@@ -1116,9 +978,13 @@
           el('h3', { className: 'cm-h' }, t('accountBalance')),
           el('button', { className: 'cm-btn small', onClick: doRefresh, disabled: busy }, busy ? t('refreshing') : t('refreshBalance'))),
         body,
+        el('div', { className: 'cm-field' }, el('label', null, t('balanceSourceChoice')),
+          el('select', { className: 'cm-input', 'aria-label': t('balanceSourceChoice'), value: (draft?.balance ?? config.balance)?.source ?? 'auto', disabled: !draft,
+            onChange: e => setDraft({ ...draft, balance: { ...draft.balance, source: e.target.value } }) },
+          el('option', { value: 'auto' }, t('balanceSourceAuto')), el('option', { value: 'account' }, t('balanceSourceAccount')))),
+        el('p', { className: 'cm-hint' }, t('balanceSourceHint')),
         el('label', null, t('balanceApiKey')),
         el(AccountCredentialLauncher, { state, draft, setDraft, target: 'balance', configured: balance.keyConfigured, source: balance.keySource, t, api, placeholder: 'sk-…' }),
-        el('p', { className: 'cm-hint' }, t('balanceKeyHint')),
         reconcile !== undefined && reconcile.ok === false ? el('div', { className: 'cm-bal-line warn' }, '⚠ ' + reconcile.message) : null,
         el('label', { className: 'cm-check' },
           el('input', { type: 'checkbox', checked: reconcileOn, onChange: toggleReconcile }),
@@ -1520,7 +1386,7 @@
     /** 单个 Coding Plan 订阅卡片(11 家共用:开关在标题行,展示/间隔/计划额度/凭据收在展开区)。 */
     let planSettingsPage
     function loadPlanSettings() {
-      return planSettingsPage ??= require.async('./client.plan-settings.js').then(module => module.mount({ useQuotaRefresh, miniMaxWindowsOf, MiniMaxPlanCard, barDirectionOf, quotaWindowRow, codingPlanWindowLabel, codingPlanWindowEntries, numInput, CredentialField, QuotaCard, resolveLocale, formatMoneyUsd, quotaPlacementValue, quotaPlacementPatch, quotaPlacementOptions })).catch(error => { planSettingsPage = null; throw error })
+      return planSettingsPage ??= require.async('./client.plan-settings.js').then(module => module.mount({ useQuotaRefresh, miniMaxWindowsOf, MiniMaxPlanCard, barDirectionOf, quotaWindowRow, codingPlanWindowLabel, codingPlanWindowEntries, numInput, CredentialField, QuotaCard, resolveLocale, formatMoneyUsd, formatBalanceMoney, quotaPlacementValue, quotaPlacementPatch, quotaPlacementOptions })).catch(error => { planSettingsPage = null; throw error })
     }
     function PlanQuotaCard(props) { return el(BillingStatistics, { ...props, load: loadPlanSettings }) }
     function AccountCredentialLauncher(props) {
@@ -1947,12 +1813,13 @@
             value: formatMoneyUsd(displayCostOf(state.total, config), config),
             sub: t('cardTotalSub', { calls: state.total.calls }),
           }))),
-        el(ExternalUsagePanel, { state, t }),
+        el(BillingStatistics, { state, t, api, load: api.loadPricing, mode: 'external', quiet: true, helpers: { Card, displayCostOf } }),
         // 快照时点与 tokens 口径脚注(用户实测对账疑问:官方 5.64 vs 本地 5.78):
         // 防抖落盘产生分钟级时差;reasoning 由 API 单列上报但不计费,token 合计
         // 天然对不齐,引导以金额对账。
         el('p', { className: 'cm-note', key: 'cards-footnote' }, t('cardsFootnote')),
         el(BillingAccuracyNote, { state }),
+        el(BillingStatistics, { state, api, load: api.loadPricing, mode: 'check', quiet: true, onPrices: () => { setTab('pricing'); setPricingView('tools') } }),
         // 宿主/浏览器时区错位提示(issue #74):宿主以非本地时区运行时,「今日」
         // 的日界与用户感知不同(本地午夜后的调用记前一日),避免误判为漏计。
         (() => {
@@ -2035,13 +1902,13 @@
           : null,
         // 显示设置：独立加载的交互预览，共用草稿与自动保存。
         el(BillingStatistics, { state: { ...state, displayPreviewCodex: codexQuotaCache.source === (state.config.codexQuotaSource ?? 'auto') ? codexQuotaSnapshot() : { status: 'idle', windows: {} } }, api, load: api.loadDisplay, draft, setDraft, t, locale,
-          numInput, displayOptions, quotaPlacementValue, quotaPlacementPatch, quotaPlacementOptions, CURRENCY_PRESETS, USAGE_POSITION_SWITCHABLE, formatMoneyUsd,
+          numInput, displayOptions, quotaPlacementValue, quotaPlacementPatch, quotaPlacementOptions, USAGE_POSITION_SWITCHABLE, formatMoneyUsd,
           planOptions: CODING_PLAN_ROWS.map(row => [row.id, t(row.labelKey)]),
           onNavigate: (page, plan) => { setQuotaTarget(plan); setTab(page) },
           renderSidebar: (preview, data = state) => renderSidebarFooter({ ...data, config: preview }, true, undefined, true),
           renderCorner: data => el(CornerChips, { useCost: () => ({ state: data }) }),
           renderStyleSample: (preview, data = state, examples = true) => {
-            if (!examples) return renderSidebarFooter({ ...data, config: preview }, true, undefined, true)
+            if (!examples || preview.sidebarStyle === 'icons') return renderSidebarFooter({ ...data, config: preview }, true, undefined, true)
             const simple = preview.sidebarSimple === true
             const sampleConfig = { ...preview, peakNotice: false, hideBudget: false, hideTodayCost: false,
               budget: { ...preview.budget, enabled: true, amount: Number(preview.budget?.amount) > 0 ? preview.budget.amount : 100 } }
@@ -2065,12 +1932,12 @@
         // 参考价格表：只在此分区挂载；未直接显示的模型保留在厂商分组。
         pricingView === 'catalog' ? el('div', { className: 'cm-pricing-catalog' },
           el('h3', { className: 'cm-h' }, t('priceTableTitle')),
-          el(BillingStatistics, { state, api, load: api.loadPricing, mode: 'catalog', draft, setDraft, t, locale, vendorLabels: CATALOG_VENDOR_LABELS, priceEditor: { priceAt, priceFactor },
+          el(BillingStatistics, { state, api, load: api.loadPricing, mode: 'catalog', draft, setDraft, t, locale, vendorLabels: CATALOG_VENDOR_LABELS, priceEditor: { PriceInput, priceAt, priceFactor },
             renderEditor: (provider, modelId, entry) => provider === 'deepseek'
               ? el(PriceCard, { modelId: modelId === '__default__' ? t('defaultModelId') : modelId, entry, isDefault: modelId === '__default__', draft, setDraft, t })
               : el(ProviderPriceCard, { provider, modelId, entry, draft, setDraft, t, api, lockedIds: provider === 'openrouter' ? state.priceLockIds ?? [] : [], releaseDisabled: JSON.stringify(draft) !== savedRef.current }) })) : null,
         pricingView === 'tools' ? el('div', { className: 'cm-pricing-tools' },
-        el('section', { className: 'cm-pricing-tool' }, el(PeakPanel, { state, draft, setDraft, t })),
+        el('section', { className: 'cm-pricing-tool' }, el(PeakPanel, { state, draft, setDraft, t, api }), el(BillingStatistics, { state, api, load: api.loadPricing, mode: 'schedule', draft, setDraft, locale })),
         el('section', { className: 'cm-pricing-tool' }, el(BillingStatistics, { state, api, load: api.loadPricing, mode: 'history', locale, disabled: busy || JSON.stringify(draft) !== savedRef.current })),
         // 官方价格同步(与价格表同组;自动保存状态已移至标签栏常驻)
         el('section', { className: 'cm-pricing-tool' },
@@ -2228,7 +2095,12 @@
       }
       const pages = {}
       const loadPage = name => {
-        if (!pages[name]) pages[name] = require.async('./client.' + name + '.js').then(module => module.mount(ctx, store, resolveLocale, { formatMoneyUsd, displayCostOf, formatTokens, updateConfig: patch => api.updateConfig(patch) })).catch(error => { delete pages[name]; throw error })
+        if (!pages[name]) {
+          const task = loadWithDeadline(() => require.async('./client.' + name + '.js'), rpcT()('pageLoadTimeout'))
+            .then(module => module.mount(ctx, store, resolveLocale, { formatMoneyUsd, displayCostOf, formatTokens, updateConfig: patch => api.updateConfig(patch) }))
+            .catch(error => { if (pages[name] === task) delete pages[name]; throw error })
+          pages[name] = task
+        }
         return pages[name]
       }
       const api = {
@@ -2292,6 +2164,8 @@
         refreshCustomBalance: async (index = null) => receive(index == null ? costMeter.refreshCustomBalance() : costMeter.refreshCustomBalance(index)),
         refreshCodingPlan: async provider => receive(costMeter.refreshCodingPlan(provider)),
         loginCodingPlan: async provider => receive(costMeter.loginCodingPlan(provider)),
+        // OpenDesign 设备码授权:一次点击 = 开授权页 + 轮询 + 写凭据库 + 立刻刷新额度。
+        loginOpenDesign: async () => receive(costMeter.loginOpenDesign()),
         // 密钥写入/清除(v1.6.8):值只沿此通道单向送入 DSH 凭据库,服务端永不回传明文。
         setCredential: async (target, value) => receive(costMeter.setCredential(target, value), 'rpcSyncFailed', true),
         clearCredential: async target => receive(costMeter.clearCredential(target), 'rpcSyncFailed', true),
@@ -2318,7 +2192,8 @@
       slots.inject('plugins.bundle.config', () => slots.register({
         name: 'plugins.bundle.config', key: 'dsh-cost-meter', inject: injected,
       }, CostSection))
-      for (const [entryPosition, name] of [['header', 'conversation.session.header.actions'], ['dock', 'conversation.composer.dock']]) slots.inject(name, () => slots.register({ name, id: 'cost-meter-statistics', order: 1, inject: () => ({ ...injected(), entryPosition }) }, SessionStatisticsButton))
+      // 标题栏费用明细入口;输入区下方入口由会话费用行(DockLine)自身承载,整行可点击,不重复注册。
+      slots.inject('conversation.session.header.actions', () => slots.register({ name: 'conversation.session.header.actions', id: 'cost-meter-statistics', order: 1, inject: injected }, SessionStatisticsButton))
       slots.inject('conversation.chat.turnTail', () => slots.register({ name: 'conversation.chat.turnTail', id: 'cost-meter-turn', order: 10, select: e => e, inject: injected }, TurnCost))
       // 通用插槽注册去重:共享「失效旧注册→bump gen→注入→生成期护栏→记录 dispose→卸载清理」逻辑。
       const slotActive = () => ({ gen: 0, dispose: null })
@@ -2336,12 +2211,12 @@
         })
       }
 
-      // 会话徽章按配置位置注册;配置变化时先撤销旧注册再重建。
+      // Keep saved dock/header/off choices while sharing the clickable cost entry.
       const sessionActive = slotActive()
       const registerSession = position => {
-        const slotName = position === 'header' ? 'conversation.session.header.actions' : 'conversation.composer.dock'
-        const options = position === 'header' ? { name: slotName, id: 'cost-meter', order: -5, inject: injected } : { name: slotName, id: 'cost-meter', order: 5, inject: injected }
-        registerSlot(sessionActive, slotName, options, position === 'header' ? SessionCost : DockLine, position !== 'off')
+        const name = position === 'header' ? 'conversation.session.header.actions' : 'conversation.composer.dock'
+        registerSlot(sessionActive, name, { name, id: 'cost-meter', order: position === 'header' ? -5 : 5,
+          inject: () => ({ ...injected(), entryPosition: position }) }, DockLine, position !== 'off')
       }
       const footerActive = slotActive()
       const registerFooter = enabled => {
@@ -2355,7 +2230,7 @@
       // 组件内部按 quotaStrip.enabled 门控,无可用数据时整条隐藏。
       slots.inject('conversation.input.dock', () => {
         const dispose = slots.register(
-          { name: 'conversation.input.dock', id: 'cost-meter-qstrip', order: 5, inject: injected },
+          { name: 'conversation.input.dock', id: 'cost-meter-qstrip', order: 100, inject: injected },
           QuotaStrip,
         )
         return dispose
@@ -2416,7 +2291,7 @@
         const balanceDisplay = state?.config?.balance?.display ?? 'both'
         const showBalance = (balanceDisplay === 'sidebar' || balanceDisplay === 'both') && state?.config?.hideOfficialBalance !== true
         const side = entry => entry?.enabled === true && ['sidebar', 'both'].includes(entry.display)
-        const footer = showToday || showBalance || state?.config?.codexQuotaEnabled === true || state?.config?.sidebarModels?.enabled === true
+        const footer = showToday || showBalance || state?.config?.localSavings?.enabled === true || state?.config?.codexQuotaEnabled === true || state?.config?.sidebarModels?.enabled === true
           || (state?.config?.budget?.enabled === true && state?.config?.hideBudget !== true)
           || (state?.config?.goQuota?.enabled === true && ['sidebar', 'both'].includes(state.config.goQuota.display))
           || (state?.config?.peakEnabled === true && state.config.peakNotice !== false)

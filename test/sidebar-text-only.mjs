@@ -1,3 +1,4 @@
+import { peakTimeZone } from '../lib/peak-timezone.js'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import { readFileSync, readdirSync, mkdtempSync, rmSync } from 'node:fs'
@@ -13,7 +14,7 @@ const nodes = n => Array.isArray(n) ? n.flatMap(nodes) : n && typeof n === 'obje
 const text = n => Array.isArray(n) ? n.map(text).join('') : n && typeof n === 'object' ? text(n.children) : n == null ? '' : String(n)
 const React = { createElement: el, Fragment: 'fragment', useRef: value => ({ current: value }), useEffect() {}, useState: value => [typeof value === 'function' ? value() : value, () => {}] }
 let factory
-vm.runInNewContext(source.replace('exports.apply = apply', 'exports.test = { parseConfig, renderSidebarFooter, peakNoticeEl, peakNoticeRailEl, PeakProgress, PeakStrip, PeakStripClassic }; exports.apply = apply'), {
+vm.runInNewContext(source.replace('exports.apply = apply', 'exports.test = { parseConfig, renderSidebarFooter, peakNoticeEl, peakNoticeRailEl, PeakProgress, PeakStrip, PeakStripClassic, peakPeriodProgress, usePeakClock }; exports.apply = apply'), {
   navigator: { language: 'en' }, window: { __ModuleLoader__: { load: v => { factory = v.factory } } },
 })
 const ui = factory(name => name === 'react' ? React : { Tooltip: 'tooltip' }).test
@@ -60,19 +61,20 @@ try {
 // The real peak renderer omits its progressbar, retaining phase, countdown, switch and tooltip.
 const now = Date.parse('2026-10-28T04:00:00Z')
 const { PeakProgress } = vm.runInNewContext(readFileSync(new URL('../src/peak/component.js', import.meta.url), 'utf8') + '\n({ PeakProgress })', {
-  el, Fragment: 'fragment', useState: React.useState, useEffect() {}, Tooltip: 'tooltip',
+  peakTimeZone, el, Fragment: 'fragment', useState: React.useState, useEffect() {}, Tooltip: 'tooltip',
+  peakPeriodProgress: ui.peakPeriodProgress, usePeakClock: ui.usePeakClock,
   resolveLocale: c => c.locale, phaseLabelKeys: () => ({ notice: 'Flat rate', short: 'Flat' }), countdownText: () => '2h',
   peakView: () => ({ prevAtMs: now - 3600000, nextAtMs: now + 7200000, nextIntoPeak: true, inPeak: false }), peakPhaseForConfig: () => null,
 })
 for (const rail of [false, true]) for (const peakTimeDisplay of ['both', 'countdown', 'switch']) {
-  const rendered = PeakProgress({ config: { ...config, locale: 'en', peakTimeDisplay }, t: key => key, now, rail })
+  const rendered = PeakProgress({ config: { ...config, peakTimeZone: 'Asia/Shanghai', locale: 'en', peakTimeDisplay }, t: key => key, now, rail })
   assert.equal(nodes(rendered).filter(n => n.props.role === 'progressbar').length, 0)
   assert.ok(text(rendered).includes('Flat'))
   if (!rail) {
     assert.equal(text(rendered).includes('2h'), peakTimeDisplay !== 'switch')
     assert.equal(text(rendered).includes('14:00'), peakTimeDisplay !== 'countdown')
   }
-  assert.ok(rendered.props.label.includes('Beijing time'))
+  assert.ok(rendered.props.label.includes('Asia/Shanghai'))
 }
 const graphical = PeakProgress({ config: { ...config, sidebarTextOnly: false }, t: key => key, now })
 assert.equal(nodes(graphical).filter(n => n.props.role === 'progressbar').length, 1)

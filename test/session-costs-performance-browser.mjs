@@ -21,7 +21,7 @@ const totalCalls = 4800, perSession = totalCalls / 3, at = Date.parse('2026-10-1
 const headers = [{ id: 'main' }, { id: 'agent-a', origin: 'subagent', parentSession: 'main' }, { id: 'agent-b', origin: 'subagent', parentSession: 'agent-a' }]
 const sessions = new Map(headers.map(header => {
   const events = [{ type: 'session', id: header.id, createdAt: at - 1000 }, { type: 'request/header', seq: 0, time: at,
-    data: { header: { config: { provider: 'deepseek', model: 'deepseek-chat' } } } }]
+    data: { header: { config: { provider: 'deepseek', model: 'deepseek-v4-flash' } } } }]
   for (let step = 1; step <= perSession; step++) events.push(
     { type: 'assistant/message', seq: step * 2, time: at + step, data: { turn: Math.ceil(step / 20), step,
       usage: { inputTokens: 1000 + step, outputTokens: 30, cacheReadTokens: 900 }, message: { content: 'synthetic private text' } } },
@@ -43,7 +43,7 @@ let loaded;const api={loadStatistics:()=>loaded??=(async()=>{
  await new Promise((yes,no)=>{const s=document.createElement('script');s.src='/statistics.js';s.onload=yes;s.onerror=no;document.head.append(s)});
  return window.stats.mount({get:n=>n==='remote'?{$mount:async()=>()=>{}}:n==='remote.costMeter'?remote:undefined,effect:()=>{}},state,()=> 'zh')
 })()};
-createRoot(document.getElementById('root')).render(React.createElement(window.main.preview.SessionStatisticsButton,{sessionId:'main',entryPosition:'dock',useCost:()=>({state}),api}));
+createRoot(document.getElementById('root')).render(React.createElement(window.main.preview.SessionStatisticsButton,{sessionId:'main',useCost:()=>({state}),api}));
 window.begin=()=>{window.timing={start:performance.now()};document.querySelector('.cm-stat-entry').click();const poll=()=>{
  const dialog=document.querySelector('dialog[open]');if(dialog&&!window.timing.dialog)window.timing.dialog=performance.now()-window.timing.start;
  const values=[...document.querySelectorAll('.cm-stat-metric .cm-stat-value')].map(n=>n.textContent);

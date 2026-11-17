@@ -18,6 +18,7 @@ const captured = new Error('contribution captured')
 await assert.rejects(client.apply({ remote: { $mount: async value => { contribution = value; throw captured } } }), error => error === captured)
 let chunkFactory
 vm.runInNewContext(readFileSync(new URL('../lib/client.statistics.js', import.meta.url), 'utf8'), {
+  setTimeout, clearTimeout,
   window: { __ModuleLoader__: { load: module => { chunkFactory = module.factory } } },
 })
 const statistics = chunkFactory(() => ({}))
@@ -66,8 +67,9 @@ assert.deepEqual(shape(contribution.descriptors), shape(TYPERT.invocations))
 for (const descriptors of [contribution.descriptors, TYPERT.invocations]) {
   const descriptor = descriptors.find(item => item.method === 'getTurnCost')
   assert.deepEqual(Array.from(descriptor.parameters, row => row.wire), ['sessionId', 'startSeq', 'endSeq', 'displayCurrency'])
-  for (const currency of [undefined, 'USD', 'CNY', 'EUR']) assert.equal(descriptor.parameters[3].codec.create().parse(currency), currency)
-  assert.throws(() => descriptor.parameters[3].codec.create().parse('JPY'))
+  for (const currency of [undefined, 'USD', 'CNY', 'EUR', 'JPY', 'GBP']) assert.equal(descriptor.parameters[3].codec.create().parse(currency), currency)
+  assert.throws(() => descriptor.parameters[3].codec.create().parse('JP'))
+  assert.throws(() => descriptor.parameters[3].codec.create().parse('jpy'))
   const codec = descriptor.result.create()
   const row = { provider: 'test', model: 'm', bucket: 'input', tokens: 100, rate: 1, cost: 0.0001, priced: true, plan: false }
   const call = { kind: 'model', provider: 'test', model: 'm', atMs: 1800000000000, cost: 0.0001, apiCost: 0.0001, plan: false, priced: true, longContext: false, rows: [row] }

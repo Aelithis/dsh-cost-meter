@@ -1,6 +1,8 @@
 # Model & Plan Adaptation Guide
 
-Updated: 2026-10-15
+Updated: 2026-10-28
+
+The [October 28 update](catalog-2026-10-28.md) adds Kimi K3.1 Pro / Highspeed, MiniMax M3.1 Flash and current plan names. The [machine-readable plan catalog](subscription-catalog.json) lists the checked sources.
 
 Current provider-scoped catalog, exact coverage, routing compatibility and limitations: [October 2026 pricing guide](provider-pricing-2026-10.md).
 
@@ -48,7 +50,7 @@ Examples:
 
 ### 1.3 Built-in price catalog (170+ model IDs)
 
-The built-in read-only catalog is grouped by **vendor → model family**, containing 18 third-party vendor/route keys plus the separate DeepSeek table:
+The built-in read-only catalog is grouped by **vendor → model family**, containing 20 third-party vendor/route keys plus the separate DeepSeek table:
 
 | Vendor | Representative models |
 |---|---|
@@ -58,12 +60,12 @@ The built-in read-only catalog is grouped by **vendor → model family**, contai
 | Google | Gemini 4 Argon / 3.8/3.7/3.6/3.5 Flash, 3.5 Flash Lite, 3.1 Pro, 3 Flash, 2.5 family |
 | xAI | Grok 4.6/4.5/4.3, Grok Build |
 | Z.ai / Zhipu | GLM-5.3/Flash, 5.2/5.1, 4.x |
-| Alibaba Qwen | Qwen3.8 Max, 3.7, 3.6, 3.5 Plus |
-| Kimi / Moonshot | K3, K2.7 Code, K2.6, K2.5 |
-| MiniMax | M3, M2.7, M2.5 |
+| Alibaba Qwen | Qwen3.8 Max / Flash, 3.7, 3.6, 3.5 Plus |
+| Kimi / Moonshot | K3.1 Pro / Highspeed, K3, K2.7 Code, K2.6, Kimi Code IDs |
+| MiniMax | M3.1 Flash, M3, M2.7, M2.5 |
 | Xiaomi MiMo | V2.6 (Pro / Flash / Pro UltraSpeed), V2.5 (+Pro, officially marked as retiring soon) |
-| Tencent Hunyuan | Hy3 |
-| OpenRouter / Mistral / NVIDIA / Upstage | common models |
+| Tencent Hunyuan | Hy4 preview, Hy3 |
+| OpenRouter / Mistral / NVIDIA / Upstage | common models; Mistral also resells `zai-glm-5-3-flash` and `deepseek-v4-1-flash-1017` at Mistral's own rates |
 | **OpenCode Go (subscription)** | subscription reference prices, including Go-specific DeepSeek peak/off-peak tiers |
 
 Price sources: cross-checked against each direct vendor's official API prices and the **separate OpenCode Zen/Go route price lists** (route prices may differ); entries without a verified complete billing rule (e.g. direct API GPT-5.5 Pro) are marked `unpriced` — **prices are never invented**. A machine-readable copy is [`provider-pricing.json`](./provider-pricing.json) (auto-generated from code).

@@ -103,7 +103,7 @@ const btn = (tree, label) => nodes(tree).find(n => n.type === 'button' && textOf
 const withClass = (tree, cls) => nodes(tree).filter(n => n.props?.className?.split(' ').includes(cls))
 const input = (tree, label) => nodes(tree).find(n => n.type === 'input' && n.props['aria-label'] === label)
 const base = sanitizeConfig({ locale: 'en', currency: 'USD', symbol: '$', exchangeRate: 1, decimals: 2,
-  position: 'off', sidebar: false, hideTodayCost: true, hideOfficialBalance: true, goQuota: { enabled: false },
+  sidebar: false, hideTodayCost: true, hideOfficialBalance: true, goQuota: { enabled: false },
   budget: { enabled: false }, peakEnabled: false, corner: { enabled: false } })
 const e = environment(), t = e.ui.makeT('en')
 const unorderedWindows = { monthly: { percent: 18 }, weekly: { percent: 46 }, daily: { percent: 0 }, fiveHour: { percent: 14 } }
@@ -482,7 +482,7 @@ for (const locale of ['zh', 'en']) {
     clearCredential: async target => { calls.push(['clear', target]); return { ok: true, message: 'cleared' } },
   }
   const panel = env.mount(env.ui.BalancePanel, { state: { balance, config: sanitizeConfig({}) }, api, t })
-  assert.ok(textOf(panel.tree).includes(t('balanceKeyHint')))
+  assert.ok(textOf(panel.tree).includes(t('balanceSourceHint')))
   const launcher = nodes(panel.tree).find(node => node.type === env.ui.AccountCredentialLauncher)
   const input = nodes(env.mount(env.ui.AccountCredentialLauncher, launcher.props).tree).find(node => node.type === env.ui.CredentialField)
   assert.equal(input.props.target, 'balance')

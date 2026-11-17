@@ -8,6 +8,7 @@
 import { writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { SUBSCRIPTION_CATALOG } from '../lib/subscription-catalog.js'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const { DEFAULT_PROVIDER_PRICE_TABLE } = await import(pathToFileURL(join(repoRoot, 'lib', 'pricing.js')).href)
@@ -21,4 +22,5 @@ const out = {
 }
 const target = join(repoRoot, 'docs', 'provider-pricing.json')
 writeFileSync(target, JSON.stringify(out, null, 2) + '\n')
+writeFileSync(join(repoRoot, 'docs', 'subscription-catalog.json'), JSON.stringify(SUBSCRIPTION_CATALOG, null, 2) + '\n')
 console.log('[ok] 已再生成 docs/provider-pricing.json(generatedAt=' + date + ')')

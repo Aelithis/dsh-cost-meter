@@ -1,5 +1,32 @@
 # 显示设置预览
 
+## 图标 / Icons
+
+在“费用 → 显示 → 侧栏 → 侧栏布局”主动选择“图标”。原有布局、简洁模式和查询偏好不会自动迁移。图标行沿用上游费用区块，在设置入口上方占用原有区域；不定位或重排设置按钮及其他插件。
+
+每个已启用的余额、预算、Coding Plan、Go、Codex、网关、模型或本地节省组件保留一个图标入口。官方余额、自定义余额有独立图形；全部 16 个套餐来源使用可区分的简写标识（不是官方品牌徽标），网关使用来源名称标识，未知自定义来源保留通用兜底和完整名称提示。点击图标展开原有组件，继续使用完整的账户列表、充值链接、刷新、错误与重试操作；再次点击、“收起”或 Escape 关闭。今日用量复用原币种、精度和费用/Token/双项设置；有 Claude 用量时，今日图标的圆环表示 Claude 在今日费用中的占比。保存的组件顺序继续生效，数字紧跟对应图标右侧，整组按顺序排列而不单独吸附侧栏最右；图标较多可横向滚动。开启“今日消费与余额同行”时，点击今日或配对余额图标会在明细中同时展开原有两个组件，继续使用上游同行布局。
+
+峰谷圆环不是整个计价阶段的归一化进度：它是固定的 8 小时感知窗口。距下一次切换超过 8 小时时保持满环，提示“距切换超过 8 小时”，不显示动态倒计时；剩余不超过 8 小时才按“剩余时间 / 8 小时”缩短。实际阶段和切换点复用渠道、周末、节假日和自定义时段规则，不修改计价。展开的原有峰谷组件保留其完整信息与原样式设置。
+
+窄栏、1023px 及以下视口、粗指针触屏和强制 `data-dsh-pocket-layout="mobile"` 暂使用原有卡片；可随时切回其他布局。可选图标分块加载中或失败时也保留原有组件，失败可重试。样式随组件卸载移除，未新增账户请求或轮询器。
+
+Choose **Cost → Display → Sidebar → Sidebar layout → Icons** explicitly. Existing layout preferences are not migrated. The existing full-width cost footer owns placement; this mode adds no host/sidebar class selectors. Every enabled sidebar component keeps an icon entry; click it to disclose its original component and actions, including all account rows, links, refresh, errors and retries. Collapse, the same icon or Escape closes details. Currency, decimal places, cost/token choices and saved component order remain effective. Values sit immediately after their icon, not in a separate right-edge bucket. When Today and balance on one line is enabled, opening either paired icon discloses both original cards in the upstream same-line container. The optional Claude share ring uses the existing cost conversion helper.
+
+The peak ring uses a fixed eight-hour countdown horizon, not whole-period progress. Above eight hours it stays full with a threshold message; inside the window it shrinks as remaining time divided by eight hours. Provider calendars and switching times remain upstream-owned. The expanded original peak component keeps its saved presentation and full information.
+
+Collapsed rails, viewports up to 1023px, coarse pointers and forced Pocket mobile mode retain the original cards. Loading/failure of the optional icon chunk also retains native content with retry. Cross-platform/theme geometry and real touch interaction require running-UI acceptance; logic/static tests alone do not certify them.
+
+
+在“费用 → 显示 → 输入区 → 套餐进度条”关闭“显示套餐余额”，输入框上方只保留套餐进度条与百分比，隐藏余额等文本段。默认开启，悬浮详情保留完整信息；该开关不会修改侧栏或账户查询。设置预览同步显示开关效果，保存后重启仍生效。
+
+在“费用 → 显示 → 通用设置”（或“侧栏 → 调整组件 → 通用设置”）的“货币单位”中可选择 26 种展示币种。切换时更新符号与该币种的每日参考汇率，小数位保持当前设置；关闭自动更新后使用输入的手动值，切换币种则改用该币种的目录汇率。旧版本保存的自定义币种仍作为一条选项显示。人民币与欧元保留调用时记录的金额，其他币种按最新参考汇率折算；完整说明见[每日汇率与历史金额](exchange-rates.md)。
+
+**Display currency:** the **Currency** field in **Cost → Display → General** (also in **Sidebar → Customize → General**) lists 26 reference currencies. Selecting one updates the symbol and that currency's daily rate; the decimal places stay as configured. With auto-update off the manual rate applies, and switching currency falls back to the catalog rate. A custom currency saved by an older version stays listed. CNY and EUR keep the amount recorded per call, other currencies follow the latest daily rate — see [daily rates and historical amounts](exchange-rates.md).
+
+在“侧栏 → 调整组件 → 官方余额 → 余额显示币种”可单独选择余额金额的展示币种:原币种(默认)、跟随显示币种或币种目录中的任一代码。换算使用当前每日参考汇率;金额使用币种目录中的符号显示。进度比例与预算上限仍按余额记账币种计算，金额随所选币种换算展示。详见[自定义余额来源](custom-balance-sources.md)。
+
+**Balance currency:** under **Sidebar → Customize → Official balance → Balance currency** the balance amount can be shown in its native currency (default), the display currency, or any catalog code. Conversion uses the current daily reference rate, and amounts use the symbol from the currency catalog. Progress percentages and budget limits stay in the balance's own currency. See [custom balance sources](custom-balance-sources.en.md).
+
 在“费用 → 显示 → 侧栏”打开“隐藏进度条，仅显示紧凑文本”，可去掉峰谷时段、套餐额度、余额、预算和模型占比的图形条。额度保留窗口名与百分比，峰谷保留当前时段、倒计时和切换时间；悬停详情、点击刷新与超额警告仍可使用。偏好会保存，重启后保留。此选项只影响侧栏和侧栏预览，不改变用量查询、账本、计价、输入区额度条或原有布局/条形方向；关闭后恢复原样式。在峰谷组件里仍可选择只显示倒计时或切换时间。
 
 **Compact text:** In **Cost → Display → Sidebar**, enable **Hide progress bars, show compact text** to hide sidebar pricing-period, quota, balance, budget and model-share bars. Window labels, percentages, period times, hover details, refresh actions and warnings remain available. The preference survives restart, applies to the sidebar preview, and never changes billing, account queries, composer bars or the saved graphical style. Disable it to restore the existing bars.
@@ -20,7 +47,7 @@ Codex 额度的真实数据来自已启用并登录的 `dsh-codex-subscription`�
 
 预览分为侧栏、输入区和会话内容三个区域，使用正常字号，只渲染当前区域。点击虚线框，在右侧调整对应组件。示例模式下隐藏的组件保留淡化效果，方便再次选中；当前数据模式下未显示的组件保留淡色标签。组件菜单只列出可调整的组件，操作提示不再作为菜单选项。显示设置的更改自动保存。
 
-右侧的“侧栏布局”默认展开，展示合并卡片、简洁、标准和紧凑四种样式的小预览，复用实际预算与多时段额度的进度卡片。小预览标记为样式示例，未配置的额度使用本地示例数值。紧凑样式将多时段额度排成两列，预算卡片保持完整。点击峰谷条可切换细条或分段样式；点击“今日金额 · 模型数”可调整模型卡片的展开、周期、摘要、位置、行数、Token 和费用占比条。预算、余额、会话费用和额度条的选项各自放在对应组件旁。金额格式、换算和语言集中在下方。宽窗口将样式缩略图横向排列，窄窗口再改为竖向；右侧面板在空间不足时排到预览下方。放大预览中按 Escape 返回。
+右侧的“侧栏布局”默认展开，展示图标、合并卡片、简洁、标准和紧凑五种样式的小预览，复用实际预算与多时段额度的进度卡片。小预览标记为样式示例，未配置的额度使用本地示例数值。紧凑样式将多时段额度排成两列，预算卡片保持完整。点击峰谷条可切换细条或分段样式；点击“今日金额 · 模型数”可调整模型卡片的展开、周期、摘要、位置、行数、Token 和费用占比条。预算、余额、会话费用和额度条的选项各自放在对应组件旁。金额格式、换算和语言集中在下方。宽窗口将样式缩略图横向排列，窄窗口再改为竖向；右侧面板在空间不足时排到预览下方。放大预览中按 Escape 返回。
 
 侧栏预览和真实侧栏共用完整的呈现函数与当前缓存数据，包含余额错误状态、独立的 Go 与预算卡片、预算摘要、今日用量和峰谷条、模型花费卡片。选择框使用独立覆盖层，不改变组件 DOM 层级和紧凑布局。打开时最多读取三个宿主表面的背景、圆角、字体等六项外观属性；主题属性变化时更新。共用插件组件、DSH 图标和主题变量，跟随这些外观的皮肤修改；其他插件的独立控件不重复挂载。
 
@@ -53,3 +80,15 @@ Codex 额度的真实数据来自已启用并登录的 `dsh-codex-subscription`�
 “合并卡片”将今日 Token 与费用、余额和峰谷进度放入同一外框。选择时默认开启今日双项显示，之后仍可分别关闭。Codex 组件提供额度查询总开关；显式开启其显示时会启用查询。billion-context 的统计偏差说明放在“费用 → 概览”，使用普通灰色文字，不再自动弹窗或提供弹窗开关。
 
 “费用 → 显示 → 侧栏”中的“今日消费与余额同行”是独立开关，可与现有布局组合使用。开启时默认只显示今日费用，Token 可在今日组件中单独开启；两项保留悬停详情，余额进度条照常显示，隐藏官方余额时使用第一条可见的自定义余额。排序在设置预览中调整，关闭开关恢复各组件独立排列。
+
+## 点击名称隐藏余额
+
+1.9.45 起，在“设置 → 费用 → 显示 → 侧栏 → 调整组件 → 余额（或自定义余额）”中可以开启“点击名称快速隐藏余额”。默认关闭。开启后，点击余额名称隐藏或显示金额，点击金额继续刷新。隐藏时不显示进度条及悬停金额；四种侧栏布局、同行显示和收起样式共用隐藏状态。本机浏览器记住隐藏状态；关闭选项即恢复原有点击刷新方式。
+
+In Settings → Cost → Display → Sidebar → Balance (or Custom balance), enable **Click name to hide balance**. This is off by default. Click the label to hide/show the amount; click the amount to refresh. Hidden balances also hide progress bars and tooltip amounts across sidebar layouts. The browser remembers hidden state. Disabling this option restores the original click-to-refresh behavior.
+
+## 套餐额度圆环
+
+1.9.49 起，在“设置 → 费用 → 显示 → 侧栏 → 调整组件 → 套餐进度条”选择“套餐额度样式 → 开口圆环”，可将多个额度窗口并排显示。默认保留横向进度条；所有套餐共用样式选择，已用／剩余方向继续由原选项控制。鼠标悬停查看完整额度和重置时间，点击或按回车刷新。“隐藏进度条，仅显示紧凑文本”开启时优先显示文本，收起侧栏仍使用原有数字布局。
+
+In **Settings → Cost → Display → Sidebar → Plan quota style**, select **Open rings**. The choice applies to Coding Plan cards; used/remaining direction, reset tooltips and refresh remain available. Compact text takes precedence, and collapsed sidebars retain their numeric layout.
