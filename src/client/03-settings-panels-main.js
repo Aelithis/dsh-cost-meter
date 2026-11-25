@@ -1760,7 +1760,7 @@
         ...(codexInstalled ? [['codex', 'Codex']] : []),
         ['display', t('tabDisplay')],
       ]
-      const warmTab = id => warmPage(({ statistics: api.loadStatistics, pricing: api.loadOpenRouter, codex: api.loadCodex })[id], { state })
+      const warmTab = id => warmPage(({ statistics: api.loadStatistics, codex: api.loadCodex })[id], { state })
       // 自动保存状态常驻标签栏右侧:在任意标签页改动配置都能看到保存反馈。
       const saveBadge = saveState.status === 'saving'
         ? el('span', { className: 'cm-hint' }, t('saving'))
@@ -2171,13 +2171,6 @@
         clearCredential: async target => receive(costMeter.clearCredential(target), 'rpcSyncFailed', true),
       }
 
-      const loadModelPrices = event => {
-        if (event.target?.closest?.('[data-slot="conversation.input.model"]')) void api.loadOpenRouter().catch(() => {})
-      }
-      for (const event of ['pointerover', 'focusin']) ctx.effect(() => {
-        document.addEventListener(event, loadModelPrices)
-        return () => document.removeEventListener(event, loadModelPrices)
-      })
       void reload()
 
       const slots = ctx.get('slots')

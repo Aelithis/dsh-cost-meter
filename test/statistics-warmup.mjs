@@ -89,7 +89,7 @@ try {
   assert.equal(measured.rows, 270)
   const damagedPath = join(root, 'damaged-source'), damagedKey = createHash('sha256').update(damagedPath).digest('hex')
   for (const records of [[], [null], [{ type: 'assistant/message' }]]) {
-    await writeFile(join(path + '.usage-cache', damagedKey + '.json'), JSON.stringify({ version: 1, source: 'test', records }))
+    await writeFile(join(path + '.usage-cache', damagedKey + '.json'), JSON.stringify({ version: 2, source: 'test', records }))
     assert.equal(await readUsageCache(path, damagedPath, 'test', value => value), null, 'incomplete metadata cannot replace the original history with zero calls')
   }
   const changed = records('session-0'); changed[2].data.usage.inputTokens = 12345

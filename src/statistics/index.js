@@ -37,6 +37,7 @@ window.__ModuleLoader__.load({
     const callBase = object({ sessionId, logSeq: v => nullableNumber(v ?? null), kind: string, turn: nullableNumber, step: nullableNumber, provider: string, model: string, atMs: number, cost: number, apiCost: number, plan: boolean, priced: boolean, longContext: boolean, rows: array(costRow) })
     const callRow = value => {
       const row = callBase(value)
+      if (value.logAtMs !== undefined) row.logAtMs = number(value.logAtMs)
       if (value.webSource !== undefined) { if (!['messages','search-api','fetch-api'].includes(value.webSource)) throw new Error('Invalid search source'); row.webSource = value.webSource }
       if (value.webSelection !== undefined) row.webSelection = string(value.webSelection)
       if (value.metering != null) row.metering = meteringRow(value.metering)
@@ -754,7 +755,7 @@ window.__ModuleLoader__.load({
             el('tbody', null, ...rows.map(row => { const included = row.bucket === 'reasoning' && row.priced && row.rate === 0; return el('tr', { key: row.bucket },
               el('td', null, names[row.bucket] ?? requestNames(text)[row.bucket]), el('td', null, row.requests ? row.requests + text(' 次', ' requests') : row.tokens.toLocaleString() + ' tokens'), el('td', null, row.priced ? money(row.rate) + (row.requests ? text(' / 次', ' / request') : ' / 1M') : '?'),
               el('td', null, included ? text('未单独计费', 'No separate charge') : row.priced ? money(row.cost) : '?'), el('td', null, row.priced && !included ? pct(row.cost, call.cost) : '—')) }))))),
-        call.logSeq != null ? el(CallInspection, { api, sessionId: call.sessionId || sessionId, seq: call.logSeq, atMs: call.atMs, revision, text, view, onViewChange: setView })
+        call.logSeq != null ? el(CallInspection, { api, sessionId: call.sessionId || sessionId, seq: call.logSeq, atMs: call.logAtMs ?? call.atMs, revision, text, view, onViewChange: setView })
           : el('p', { className: 'cm-stat-sub' }, text('未保存调用内容', 'Call content not stored')))
     }
 
